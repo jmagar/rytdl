@@ -58,6 +58,7 @@ directories = "5"
 ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 ffmpeg-sidecar = "2.5.2"
 fs2 = "0.4.3"
+dialoguer = { version = "0.12.0", default-features = false }
 
 [profile.release]
 strip = true
