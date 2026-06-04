@@ -30,6 +30,6 @@ log "creating venv at $VENV"
 "$PYTHON" -m venv "$VENV" >&2
 log "installing youtube-dl-mcp + deps (first run can take a minute)"
 "$VENV/bin/pip" install --upgrade pip >&2
-"$VENV/bin/pip" install -e "$ROOT" >&2
+"$VENV/bin/pip" install -e "$ROOT/python" >&2
 echo "$ROOT" > "$STAMP"
 log "ready"

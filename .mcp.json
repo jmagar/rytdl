@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "youtube-dl": {
+    "ytdl-mcp": {
       "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-server.sh",
       "env": {
         "YTDLP_REMOTE": "${user_config.remote}",
