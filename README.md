@@ -1,123 +1,89 @@
-# youtube-dl-mcp
+# ytdl-mcp
 
-An MCP server that downloads media from any [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported
-site (YouTube, Vimeo, etc.) as **audio, video, or both** — defaulting to audio — and then
-`rsync`s the result to a directory on an SSH remote you have passwordless key-based auth for.
+A cross-platform, single-binary **MCP server** that downloads media from any
+[yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported site (YouTube, Vimeo, …) as
+**audio, video, or both** — defaulting to audio — embeds metadata + cover art,
+organizes files as `Artist/Title [id].ext`, and `rsync`s (or `scp`s) the result
+to a directory on an SSH remote you have passwordless key-based auth for.
 
-Built on the official MCP Python SDK (`mcp` ≥ 1.27) with FastMCP.
+Written in Rust (built on the [`rmcp`](https://crates.io/crates/rmcp) crate).
+**yt-dlp and ffmpeg are auto-downloaded** into a per-user cache on first run, so
+the host needs neither pre-installed.
+
+> The original Python implementation lives under [`python/`](./python) for
+> reference; the Rust binary supersedes it.
 
 ## Tools
 
 | Tool | Purpose |
 | --- | --- |
-| `youtube_download` | Download one or more URLs (audio/video/both) and rsync them to a remote dir. |
+| `youtube_download` | Download one or more URLs (audio/video/both) and rsync/scp them to a remote dir. |
 | `youtube_probe` | Read-only: resolve title/duration/uploader/format counts without downloading. |
 
-### `youtube_download` parameters
-
-- `urls` — one or more URLs (a single string is accepted).
-- `mode` — `audio` (default), `video`, or `both`.
-- `audio_format` — `mp3` (default), `m4a`, `opus`, `flac`, `wav`, or `best` (skips re-encode).
-- `audio_quality` — `0`–`9` (VBR, `0` = best) or a bitrate like `192K`. Ignored for `best`/`flac`/`wav`.
-- `max_height` — cap video resolution, e.g. `1080`, `2160`. Omit for best available.
-- `container` — `mp4` (default) or `mkv` for video output.
-- `remote` — SSH alias (`~/.ssh/config`) or `user@host`. Falls back to `YTDLP_REMOTE`.
-- `dest_path` — **absolute** remote directory. Falls back to `YTDLP_REMOTE_PATH`.
-- `keep_local` — keep the staged local copy after a successful transfer (default `false`).
-- `use_archive` — record downloaded IDs and skip them on future calls (default `false`).
-- `response_format` — `markdown` (default) or `json`.
-
-`mode='both'` runs two passes and produces a merged video file **and** a separately
-extracted audio file per source. On transfer failure the local staging copy is kept so
-you can retry; on success it's deleted unless `keep_local` is set. Per-file download
-progress is reported to clients that support progress notifications.
-
-### Download archive (`use_archive`)
-
-When enabled, yt-dlp records each downloaded video ID and skips it next time — ideal for
-re-pulling a playlist or channel and only grabbing what's new. Audio and video are tracked
-in **separate** archive files (`archive-audio.txt`, `archive-video.txt`) so `both` mode
-never has one pass skip the other. Archives persist in `YTDLP_ARCHIVE_DIR` (default
-`~/.local/state/youtube_dl_mcp`), independent of the ephemeral staging dir.
-
-### Auto-update
-
-yt-dlp's YouTube extractor breaks often, so the server **updates yt-dlp at startup** when
-the installed version is older than `YTDLP_MAX_AGE_DAYS` (default `90`, matching yt-dlp's
-own staleness warning). This runs before yt-dlp is first imported, so a fresh launch
-self-heals — which is the normal case, since MCP clients spawn the server per session.
-
-> A `pip install -U` can't hot-swap a module already loaded in a long-running process, so
-> mid-session updates only take effect on the next launch. Disable entirely with
-> `YTDLP_AUTO_UPDATE=0`; set `YTDLP_UPDATE_PRE=1` to track the nightly channel. Update
-> status is logged to stderr (stdout is reserved for the JSON-RPC transport).
-
-## Requirements
-
-- **Python** ≥ 3.11
-- **ffmpeg** — audio extraction and video merging
-- **rsync** and **ssh** (openssh-client) on the local host
-- Passwordless key-based SSH auth to the remote (`-o BatchMode=yes` is forced, so a
-  missing key fails fast instead of prompting)
-
-```bash
-# Debian/Ubuntu
-sudo apt install ffmpeg rsync openssh-client
-```
+`youtube_download` cleans YouTube mix/radio URLs to the seed video, tracks a
+per-mode download archive (`use_archive`), sends audio and video to **separate**
+destinations, and keeps the local staging copy on transfer failure for retry.
 
 ## Install
 
+Download the binary for your platform from
+[Releases](https://github.com/jmagar/ytdl-mcp/releases), or build it:
+
 ```bash
-# from the project root
-uv sync            # or: pip install -e .
+cargo build --release      # target/release/ytdl-mcp
 ```
 
-## Configure your MCP client
+Then run the guided installer, which fetches yt-dlp + ffmpeg, prompts for your
+remote/destinations, and registers the server into whichever agent CLIs you have:
 
-`uv` (recommended — pins to this project's venv):
-
-```json
-{
-  "mcpServers": {
-    "youtube-dl": {
-      "command": "uv",
-      "args": ["--directory", "/abs/path/to/youtube-dl-mcp", "run", "youtube-dl-mcp"],
-      "env": {
-        "YTDLP_REMOTE": "tootie",
-        "YTDLP_REMOTE_PATH": "/mnt/user/media/music",
-        "YTDLP_STAGING_DIR": "/tmp"
-      }
-    }
-  }
-}
+```bash
+ytdl-mcp setup
 ```
 
-### Environment variables (all optional)
+It shells out to each CLI's own `mcp add` (Claude Code, Codex, Gemini CLI) — no
+JSON/TOML hand-editing.
+
+### Manual registration
+
+Run bare, the binary serves MCP over stdio. Register it yourself with:
+
+```bash
+claude mcp add -s user ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music -- /path/to/ytdl-mcp
+codex  mcp add --env YTDLP_REMOTE=tootie --env YTDLP_REMOTE_PATH=/media/music ytdl-mcp -- /path/to/ytdl-mcp
+gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music
+```
+
+It is also distributed as a **Claude Code plugin** (`.claude-plugin/`, which
+downloads the release binary) and a **Gemini CLI extension**
+(`gemini-extension.json`).
+
+## Configuration (environment variables)
 
 | Var | Default | Meaning |
 | --- | --- | --- |
-| `YTDLP_REMOTE` | — | Default SSH remote when `remote` isn't passed. |
-| `YTDLP_REMOTE_PATH` | — | Default absolute remote destination dir. |
+| `YTDLP_REMOTE` | — | SSH remote (alias or user@host) for transfers. |
+| `YTDLP_REMOTE_PATH` | — | Absolute remote dir for **audio**. |
+| `YTDLP_VIDEO_REMOTE_PATH` | falls back to audio | Absolute remote dir for **video**. |
+| `YTDLP_AUDIO_FORMAT` | `mp3` | Default audio codec (`mp3`/`m4a`/`opus`/`flac`/`wav`/`best`). |
 | `YTDLP_STAGING_DIR` | system temp | Local staging base dir. |
-| `YTDLP_AUDIO_FORMAT` | `mp3` | Default audio codec. |
-| `YTDLP_SSH_OPTS` | — | Extra `ssh` options, space-separated (appended after `-o BatchMode=yes`). |
-| `YTDLP_ARCHIVE_DIR` | `~/.local/state/youtube_dl_mcp` | Where download archives live. |
-| `YTDLP_AUTO_UPDATE` | `1` | Auto-update yt-dlp at startup when stale. |
-| `YTDLP_MAX_AGE_DAYS` | `90` | Age threshold (days) that counts as stale. |
-| `YTDLP_UPDATE_PRE` | `0` | Update from the nightly channel instead of stable. |
+| `YTDLP_SSH_OPTS` | — | Extra ssh options (appended after `-o BatchMode=yes -o StrictHostKeyChecking=accept-new`). |
+| `YTDLP_ARCHIVE_DIR` | per-user state dir | Where `use_archive` history lives. |
+| `YTDLP_AUTO_UPDATE` | `1` | Re-download yt-dlp when stale. |
+| `YTDLP_MAX_AGE_DAYS` | `14` | Staleness threshold (days). |
+| `YTDLP_UPDATE_PRE` | `0` | Track yt-dlp's nightly channel. |
+| `YTDLP_PATH` / `FFMPEG_PATH` | — | Use a specific yt-dlp / ffmpeg instead of auto-download. |
 
-## Notes & limitations
+## Requirements
 
-- `dest_path` should be **absolute**; `~` is not shell-expanded (it's quoted to survive spaces).
-- Playlist URLs are downloaded fully and flattened into the destination dir.
-- Downloads block until complete; the work runs off the event loop so the server stays responsive.
+- **ssh** (and optionally **rsync** — falls back to **scp**, e.g. on Windows).
+- Passwordless key-based SSH auth to the remote.
+- yt-dlp and ffmpeg are fetched automatically (override with `YTDLP_PATH` /
+  `FFMPEG_PATH`, or just have them on `PATH`).
 
-## Test locally
+## Build from source / cross-compile
 
 ```bash
-# boots over stdio; Ctrl-C to exit
-uv run youtube-dl-mcp
-
-# or inspect with the MCP Inspector
-npx @modelcontextprotocol/inspector uv run youtube-dl-mcp
+cargo build --release                                   # Linux
+cargo xwin build --release --target x86_64-pc-windows-msvc   # Windows (needs nasm + llvm)
+cargo test && cargo clippy --all-targets -- -D warnings
 ```
