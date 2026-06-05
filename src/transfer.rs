@@ -60,7 +60,11 @@ async fn rsync(dir: &Path, remote: &str, dest_path: &str, ssh_opts: &[String]) -
         .output()
         .await?;
     if !out.status.success() {
-        bail!("rsync failed (exit {:?}): {}", out.status.code(), command_error(&out));
+        bail!(
+            "rsync failed (exit {:?}): {}",
+            out.status.code(),
+            command_error(&out)
+        );
     }
     Ok(())
 }
@@ -84,11 +88,14 @@ async fn scp(dir: &Path, remote: &str, dest_path: &str, ssh_opts: &[String]) -> 
     cmd.arg(&target);
     let out = cmd.output().await?;
     if !out.status.success() {
-        bail!("scp failed (exit {:?}): {}", out.status.code(), command_error(&out));
+        bail!(
+            "scp failed (exit {:?}): {}",
+            out.status.code(),
+            command_error(&out)
+        );
     }
     Ok(())
 }
-
 
 /// Minimal single-quote shell escaping for the remote path (survives spaces).
 fn shell_quote(s: &str) -> String {

@@ -93,7 +93,11 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         }
         // Archive hit / genuinely empty — succeed with a no-op summary.
         let payload = download_payload(&results, &remote, &[], true, None, None);
-        return Ok(render(&payload, input.response_format, render_download_markdown));
+        return Ok(render(
+            &payload,
+            input.response_format,
+            render_download_markdown,
+        ));
     }
 
     // The destination each kind actually produced files for — drives both the
@@ -138,7 +142,11 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         transfer_error.clone(),
         staging_kept.as_deref(),
     );
-    Ok(render(&payload, input.response_format, render_download_markdown))
+    Ok(render(
+        &payload,
+        input.response_format,
+        render_download_markdown,
+    ))
 }
 
 async fn transfer_kind(dir: &Path, remote: &str, dest: &str, ssh_opts: &[String]) -> Result<()> {
@@ -166,7 +174,11 @@ pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
         results.push(downloader::probe(&ytdlp, &url, cfg.extractor_args.as_deref()).await);
     }
     let payload = probe_payload(&results);
-    Ok(render(&payload, input.response_format, render_probe_markdown))
+    Ok(render(
+        &payload,
+        input.response_format,
+        render_probe_markdown,
+    ))
 }
 
 // ── formatting ──────────────────────────────────────────────────────────────
@@ -264,7 +276,9 @@ fn render_download_markdown(p: &serde_json::Value) -> String {
     if transferred {
         lines.push(format!(
             "Transferred {} file(s) ({}) to `{}`.",
-            p["total_files"], p["total_size"].as_str().unwrap_or(""), p["destination"].as_str().unwrap_or("")
+            p["total_files"],
+            p["total_size"].as_str().unwrap_or(""),
+            p["destination"].as_str().unwrap_or("")
         ));
     } else {
         lines.push(format!(
@@ -278,14 +292,25 @@ fn render_download_markdown(p: &serde_json::Value) -> String {
     lines.push(String::new());
     for item in p["items"].as_array().into_iter().flatten() {
         if let Some(err) = item["error"].as_str() {
-            lines.push(format!("- {} - failed: {err}", item["url"].as_str().unwrap_or("")));
+            lines.push(format!(
+                "- {} - failed: {err}",
+                item["url"].as_str().unwrap_or("")
+            ));
             continue;
         }
-        let title = item["title"].as_str().unwrap_or_else(|| item["url"].as_str().unwrap_or(""));
-        let suffix = if item["is_playlist"].as_bool().unwrap_or(false) { " (playlist)" } else { "" };
+        let title = item["title"]
+            .as_str()
+            .unwrap_or_else(|| item["url"].as_str().unwrap_or(""));
+        let suffix = if item["is_playlist"].as_bool().unwrap_or(false) {
+            " (playlist)"
+        } else {
+            ""
+        };
         let files = item["files"].as_array().cloned().unwrap_or_default();
         if files.is_empty() {
-            lines.push(format!("- {title}{suffix} - nothing new (already archived)"));
+            lines.push(format!(
+                "- {title}{suffix} - nothing new (already archived)"
+            ));
             continue;
         }
         lines.push(format!("- {title}{suffix}"));
@@ -305,12 +330,20 @@ fn render_probe_markdown(p: &serde_json::Value) -> String {
     let mut lines = Vec::new();
     for r in p["items"].as_array().into_iter().flatten() {
         if let Some(err) = r["error"].as_str() {
-            lines.push(format!("- {} - failed: {err}", r["url"].as_str().unwrap_or("")));
+            lines.push(format!(
+                "- {} - failed: {err}",
+                r["url"].as_str().unwrap_or("")
+            ));
             continue;
         }
-        let title = r["title"].as_str().unwrap_or_else(|| r["url"].as_str().unwrap_or(""));
+        let title = r["title"]
+            .as_str()
+            .unwrap_or_else(|| r["url"].as_str().unwrap_or(""));
         if r["is_playlist"].as_bool().unwrap_or(false) {
-            lines.push(format!("- {title} - playlist, {} item(s)", r["entry_count"]));
+            lines.push(format!(
+                "- {title} - playlist, {} item(s)",
+                r["entry_count"]
+            ));
         } else {
             let mut s = format!("- {title} - {}", human_duration(r["duration"].as_f64()));
             if let Some(up) = r["uploader"].as_str() {

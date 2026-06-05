@@ -2,7 +2,6 @@
   "name": "ytdl-mcp",
   "version": "0.4.0",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and rsync it to an SSH remote.",
-  "contextFileName": "GEMINI.md",
   "mcpServers": {
     "ytdl-mcp": {
       "command": "ytdl-mcp",
@@ -29,6 +28,11 @@
       "name": "Default audio codec",
       "description": "mp3 (default), m4a, opus, flac, wav, or best.",
       "envVar": "YTDLP_AUDIO_FORMAT"
+    },
+    {
+      "name": "yt-dlp extractor args",
+      "description": "Passed to yt-dlp's --extractor-args, e.g. youtube:player_client=android. Optional.",
+      "envVar": "YTDLP_EXTRACTOR_ARGS"
     }
   ]
 }

@@ -205,7 +205,13 @@ pub async fn fetch(
     }
     if matches!(mode, DownloadMode::Audio | DownloadMode::Both) {
         let archive = archive_dir.map(|d| d.join("archive-audio.txt"));
-        let args = audio_args(staging, audio_format, audio_quality, tools, archive.as_deref());
+        let args = audio_args(
+            staging,
+            audio_format,
+            audio_quality,
+            tools,
+            archive.as_deref(),
+        );
         if let Err(e) = run_pass(&tools.ytdlp, url, args, "audio", &mut result).await {
             result.error = Some(e.to_string());
             return result;
@@ -260,8 +266,7 @@ pub async fn probe(ytdlp: &Path, url: &str, extractor_args: Option<&str>) -> Pro
 
     let entries = info.get("entries").and_then(|e| e.as_array());
     if let Some(entries) = entries {
-        let non_null: Vec<&serde_json::Value> =
-            entries.iter().filter(|e| !e.is_null()).collect();
+        let non_null: Vec<&serde_json::Value> = entries.iter().filter(|e| !e.is_null()).collect();
         r.is_playlist = true;
         r.entry_count = Some(non_null.len());
         r.title = str_field(&info, "title")
@@ -289,4 +294,3 @@ fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
         .map(ToOwned::to_owned)
         .filter(|s| !s.is_empty())
 }
-

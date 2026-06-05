@@ -48,7 +48,10 @@ impl AudioFormat {
     }
     /// Codecs where a quality knob does not apply.
     pub fn is_lossless_or_passthrough(self) -> bool {
-        matches!(self, AudioFormat::Best | AudioFormat::Flac | AudioFormat::Wav)
+        matches!(
+            self,
+            AudioFormat::Best | AudioFormat::Flac | AudioFormat::Wav
+        )
     }
     /// Containers that can hold tags + embedded cover art (WAV cannot).
     pub fn is_taggable(self) -> bool {
@@ -151,3 +154,7 @@ pub struct ProbeInput {
     #[serde(default)]
     pub response_format: ResponseFormat,
 }
+
+#[cfg(test)]
+#[path = "model_tests.rs"]
+mod tests;

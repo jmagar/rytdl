@@ -36,7 +36,11 @@ pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     if cached.is_file() && fresh_enough(&cached, cfg) {
         return Ok(cached);
     }
-    let base = if cfg.update_pre { NIGHTLY_BASE } else { STABLE_BASE };
+    let base = if cfg.update_pre {
+        NIGHTLY_BASE
+    } else {
+        STABLE_BASE
+    };
     let url = format!("{base}/{}", asset_name());
     tracing::info!(%url, "downloading yt-dlp");
     http::download_to_file(&url, &cached)?;

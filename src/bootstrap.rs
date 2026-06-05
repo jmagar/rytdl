@@ -113,3 +113,7 @@ fn with_bin_lock<T>(f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
     let _ = FileExt::unlock(&lock);
     result
 }
+
+#[cfg(test)]
+#[path = "bootstrap_tests.rs"]
+mod tests;

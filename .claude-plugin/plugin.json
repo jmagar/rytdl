@@ -76,6 +76,12 @@
       "title": "Track nightly channel",
       "description": "Update from yt-dlp's nightly pre-release channel instead of stable.",
       "default": false
+    },
+    "extractor_args": {
+      "type": "string",
+      "title": "yt-dlp extractor args",
+      "description": "Passed to yt-dlp's --extractor-args, e.g. 'youtube:player_client=android' for videos the default clients can't reach. Optional.",
+      "required": false
     }
   }
 }

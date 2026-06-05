@@ -13,7 +13,8 @@ use crate::config::Config;
 
 pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     // 1. override / 2. PATH
-    if let Some(p) = resolve_override_or_path(cfg.ffmpeg_path.as_deref(), "FFMPEG_PATH", "ffmpeg")? {
+    if let Some(p) = resolve_override_or_path(cfg.ffmpeg_path.as_deref(), "FFMPEG_PATH", "ffmpeg")?
+    {
         return Ok(p);
     }
     // 3. cache

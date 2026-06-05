@@ -25,9 +25,18 @@ struct Agent {
 }
 
 const AGENTS: &[Agent] = &[
-    Agent { bin: "claude", label: "Claude Code" },
-    Agent { bin: "codex", label: "Codex" },
-    Agent { bin: "gemini", label: "Gemini CLI" },
+    Agent {
+        bin: "claude",
+        label: "Claude Code",
+    },
+    Agent {
+        bin: "codex",
+        label: "Codex",
+    },
+    Agent {
+        bin: "gemini",
+        label: "Gemini CLI",
+    },
 ];
 
 pub async fn run() -> Result<()> {
@@ -40,7 +49,11 @@ pub async fn run() -> Result<()> {
     eprintln!("  yt-dlp:  {}", tools.ytdlp.display());
     eprintln!(
         "  ffmpeg:  {}\n",
-        tools.ffmpeg_dir.as_deref().map(|d| d.display().to_string()).unwrap_or_else(|| "(system)".into())
+        tools
+            .ffmpeg_dir
+            .as_deref()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|| "(system)".into())
     );
 
     // 2. Prompt for config.
@@ -137,7 +150,9 @@ fn register(agent: &Agent, self_path: &str, envs: &[(String, String)]) -> Result
         }
     }
 
-    let out = cmd.output().with_context(|| format!("run {} mcp add", agent.bin))?;
+    let out = cmd
+        .output()
+        .with_context(|| format!("run {} mcp add", agent.bin))?;
     if !out.status.success() {
         anyhow::bail!("{}", crate::util::command_error(&out));
     }

@@ -73,7 +73,10 @@ fn non_empty(key: &str) -> Option<String> {
 
 fn as_bool(key: &str, default: bool) -> bool {
     match std::env::var(key) {
-        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         Err(_) => default,
     }
 }
@@ -84,3 +87,7 @@ fn as_int(key: &str, default: i64) -> i64 {
         .and_then(|v| v.trim().parse().ok())
         .unwrap_or(default)
 }
+
+#[cfg(test)]
+#[path = "config_tests.rs"]
+mod tests;
