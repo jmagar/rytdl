@@ -14,7 +14,7 @@ use crate::urls::strip_mix_params;
 
 /// Default archive dir when `use_archive` is on but none configured.
 fn default_archive_dir() -> PathBuf {
-    directories::ProjectDirs::from("tv", "tootie", "ytdl-mcp")
+    bootstrap::project_dirs()
         .map(|d| d.state_dir().unwrap_or_else(|| d.data_dir()).to_path_buf())
         .unwrap_or_else(|| std::env::temp_dir().join("ytdl-mcp-state"))
 }
@@ -141,12 +141,18 @@ async fn ensure_tools(cfg: &Config) -> Result<bootstrap::Tools> {
     tokio::task::spawn_blocking(move || bootstrap::ensure(&cfg)).await?
 }
 
+/// Resolve yt-dlp only — probe never needs ffmpeg, so don't pay for its download.
+async fn ensure_ytdlp(cfg: &Config) -> Result<PathBuf> {
+    let cfg = cfg.clone();
+    tokio::task::spawn_blocking(move || bootstrap::ensure_ytdlp(&cfg)).await?
+}
+
 pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
-    let tools = ensure_tools(cfg).await?;
+    let ytdlp = ensure_ytdlp(cfg).await?;
     let mut results = Vec::new();
     for raw in input.urls.into_vec() {
         let url = strip_mix_params(&raw);
-        results.push(downloader::probe(&tools, &url).await);
+        results.push(downloader::probe(&ytdlp, &url).await);
     }
     let payload = probe_payload(&results);
     Ok(render(&payload, input.response_format, render_probe_markdown))

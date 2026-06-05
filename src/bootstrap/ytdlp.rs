@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 
-use super::http;
+use super::{exe_name, http, resolve_override_or_path};
 use crate::config::Config;
 
 const STABLE_BASE: &str = "https://github.com/yt-dlp/yt-dlp/releases/latest/download";
@@ -26,30 +26,13 @@ fn asset_name() -> &'static str {
     }
 }
 
-/// Local filename inside the cache dir.
-fn local_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "yt-dlp.exe"
-    } else {
-        "yt-dlp"
-    }
-}
-
 pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
-    // 1. explicit override
-    if let Some(p) = &cfg.ytdlp_path {
-        let pb = PathBuf::from(p);
-        if pb.is_file() {
-            return Ok(pb);
-        }
-        anyhow::bail!("YTDLP_PATH does not exist: {p}");
-    }
-    // 2. PATH
-    if let Ok(p) = which::which("yt-dlp") {
+    // 1. override / 2. PATH
+    if let Some(p) = resolve_override_or_path(cfg.ytdlp_path.as_deref(), "YTDLP_PATH", "yt-dlp")? {
         return Ok(p);
     }
     // 3 / 4. cache, downloading or refreshing as needed
-    let cached = bin_dir.join(local_name());
+    let cached = bin_dir.join(exe_name("yt-dlp"));
     if cached.is_file() && fresh_enough(&cached, cfg) {
         return Ok(cached);
     }

@@ -13,6 +13,7 @@ mod service;
 mod setup;
 mod transfer;
 mod urls;
+mod util;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

@@ -11,6 +11,7 @@ use tokio::process::Command;
 
 use crate::bootstrap::Tools;
 use crate::model::{AudioFormat, DownloadMode, VideoContainer};
+use crate::util::command_error;
 
 /// Field separator embedded in the `--print` template (unit separator, unlikely
 /// to appear in titles).
@@ -123,27 +124,23 @@ fn video_args(
     a
 }
 
-/// Run one yt-dlp pass and parse the produced files from its `--print` output.
+/// Run one yt-dlp pass, parsing the produced files + metadata from its
+/// `--print` output straight into `result`. Fields are filled once (first
+/// pass wins); `is_playlist` is set when a single pass yields >1 file.
 async fn run_pass(
-    tools: &Tools,
+    ytdlp: &Path,
     url: &str,
     args: Vec<String>,
     kind: &'static str,
-) -> Result<(Vec<MediaFile>, ItemMeta)> {
-    let output = Command::new(&tools.ytdlp)
-        .args(&args)
-        .arg(url)
-        .output()
-        .await?;
-
+    result: &mut ItemResult,
+) -> Result<()> {
+    let output = Command::new(ytdlp).args(&args).arg(url).output().await?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("{}", stderr.trim());
+        anyhow::bail!("{}", command_error(&output));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut files = Vec::new();
-    let mut meta = ItemMeta::default();
+    let mut count = 0;
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split(SEP).collect();
         if parts.len() != 5 {
@@ -151,34 +148,28 @@ async fn run_pass(
         }
         let (id, title, uploader, duration, filepath) =
             (parts[0], parts[1], parts[2], parts[3], parts[4]);
-        meta.video_id.get_or_insert_with(|| id.to_string());
-        meta.title.get_or_insert_with(|| title.to_string());
-        if meta.uploader.is_none() && uploader != "NA" {
-            meta.uploader = Some(uploader.to_string());
+        result.video_id.get_or_insert_with(|| id.to_string());
+        result.title.get_or_insert_with(|| title.to_string());
+        if result.uploader.is_none() && uploader != "NA" {
+            result.uploader = Some(uploader.to_string());
         }
-        if meta.duration.is_none() {
-            meta.duration = duration.parse().ok();
+        if result.duration.is_none() {
+            result.duration = duration.parse().ok();
         }
         let path = PathBuf::from(filepath);
         if let Ok(md) = std::fs::metadata(&path) {
-            files.push(MediaFile {
+            result.files.push(MediaFile {
                 path,
                 kind,
                 size: md.len(),
             });
+            count += 1;
         }
     }
-    meta.is_playlist = files.len() > 1;
-    Ok((files, meta))
-}
-
-#[derive(Default)]
-struct ItemMeta {
-    title: Option<String>,
-    video_id: Option<String>,
-    uploader: Option<String>,
-    duration: Option<f64>,
-    is_playlist: bool,
+    if count > 1 {
+        result.is_playlist = true;
+    }
+    Ok(())
 }
 
 /// Download one URL per `mode`, returning the per-URL outcome. `mode = both`
@@ -203,29 +194,17 @@ pub async fn fetch(
     if matches!(mode, DownloadMode::Video | DownloadMode::Both) {
         let archive = archive_dir.map(|d| d.join("archive-video.txt"));
         let args = video_args(staging, container, max_height, tools, archive.as_deref());
-        match run_pass(tools, url, args, "video").await {
-            Ok((files, meta)) => {
-                result.files.extend(files);
-                apply_meta(&mut result, meta);
-            }
-            Err(e) => {
-                result.error = Some(e.to_string());
-                return result;
-            }
+        if let Err(e) = run_pass(&tools.ytdlp, url, args, "video", &mut result).await {
+            result.error = Some(e.to_string());
+            return result;
         }
     }
     if matches!(mode, DownloadMode::Audio | DownloadMode::Both) {
         let archive = archive_dir.map(|d| d.join("archive-audio.txt"));
         let args = audio_args(staging, audio_format, audio_quality, tools, archive.as_deref());
-        match run_pass(tools, url, args, "audio").await {
-            Ok((files, meta)) => {
-                result.files.extend(files);
-                apply_meta(&mut result, meta);
-            }
-            Err(e) => {
-                result.error = Some(e.to_string());
-                return result;
-            }
+        if let Err(e) = run_pass(&tools.ytdlp, url, args, "audio", &mut result).await {
+            result.error = Some(e.to_string());
+            return result;
         }
     }
     result
@@ -245,12 +224,13 @@ pub struct ProbeResult {
 }
 
 /// Resolve metadata for a URL without downloading (`yt-dlp -J --skip-download`).
-pub async fn probe(tools: &Tools, url: &str) -> ProbeResult {
+/// Takes just the yt-dlp path — probe never needs ffmpeg.
+pub async fn probe(ytdlp: &Path, url: &str) -> ProbeResult {
     let mut r = ProbeResult {
         url: url.to_string(),
         ..Default::default()
     };
-    let output = match Command::new(&tools.ytdlp)
+    let output = match Command::new(ytdlp)
         .args(["-J", "--skip-download", "--no-warnings", "--quiet"])
         .arg(url)
         .output()
@@ -306,18 +286,3 @@ fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-fn apply_meta(result: &mut ItemResult, meta: ItemMeta) {
-    if result.title.is_none() {
-        result.title = meta.title;
-    }
-    if result.video_id.is_none() {
-        result.video_id = meta.video_id;
-    }
-    if result.uploader.is_none() {
-        result.uploader = meta.uploader;
-    }
-    if result.duration.is_none() {
-        result.duration = meta.duration;
-    }
-    result.is_playlist |= meta.is_playlist;
-}

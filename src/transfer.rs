@@ -10,6 +10,8 @@ use std::path::Path;
 use anyhow::{bail, Result};
 use tokio::process::Command;
 
+use crate::util::command_error;
+
 /// Ensure the destination directory tree exists on the remote (idempotent).
 pub async fn ensure_remote_dir(remote: &str, dest_path: &str, ssh_opts: &[String]) -> Result<()> {
     let out = Command::new("ssh")
@@ -19,7 +21,7 @@ pub async fn ensure_remote_dir(remote: &str, dest_path: &str, ssh_opts: &[String
         .output()
         .await?;
     if !out.status.success() {
-        let detail = stderr_or(&out);
+        let detail = command_error(&out);
         bail!(
             "could not create '{dest_path}' on '{remote}': {detail}. \
              Check the remote alias, your SSH key, and write permissions."
@@ -58,7 +60,7 @@ async fn rsync(dir: &Path, remote: &str, dest_path: &str, ssh_opts: &[String]) -
         .output()
         .await?;
     if !out.status.success() {
-        bail!("rsync failed (exit {:?}): {}", out.status.code(), stderr_or(&out));
+        bail!("rsync failed (exit {:?}): {}", out.status.code(), command_error(&out));
     }
     Ok(())
 }
@@ -82,20 +84,11 @@ async fn scp(dir: &Path, remote: &str, dest_path: &str, ssh_opts: &[String]) -> 
     cmd.arg(&target);
     let out = cmd.output().await?;
     if !out.status.success() {
-        bail!("scp failed (exit {:?}): {}", out.status.code(), stderr_or(&out));
+        bail!("scp failed (exit {:?}): {}", out.status.code(), command_error(&out));
     }
     Ok(())
 }
 
-fn stderr_or(out: &std::process::Output) -> String {
-    let s = String::from_utf8_lossy(&out.stderr);
-    let s = s.trim();
-    if s.is_empty() {
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
-    } else {
-        s.to_string()
-    }
-}
 
 /// Minimal single-quote shell escaping for the remote path (survives spaces).
 fn shell_quote(s: &str) -> String {

@@ -139,13 +139,7 @@ fn register(agent: &Agent, self_path: &str, envs: &[(String, String)]) -> Result
 
     let out = cmd.output().with_context(|| format!("run {} mcp add", agent.bin))?;
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let err = if err.trim().is_empty() {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        } else {
-            err.trim().to_string()
-        };
-        anyhow::bail!("{err}");
+        anyhow::bail!("{}", crate::util::command_error(&out));
     }
     Ok(())
 }

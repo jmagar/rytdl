@@ -8,31 +8,16 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use ffmpeg_sidecar::download::{download_ffmpeg_package, ffmpeg_download_url, unpack_ffmpeg};
 
+use super::{exe_name, resolve_override_or_path};
 use crate::config::Config;
 
-fn local_name() -> &'static str {
-    if cfg!(target_os = "windows") {
-        "ffmpeg.exe"
-    } else {
-        "ffmpeg"
-    }
-}
-
 pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
-    // 1. explicit override
-    if let Some(p) = &cfg.ffmpeg_path {
-        let pb = PathBuf::from(p);
-        if pb.is_file() {
-            return Ok(pb);
-        }
-        anyhow::bail!("FFMPEG_PATH does not exist: {p}");
-    }
-    // 2. PATH
-    if let Ok(p) = which::which("ffmpeg") {
+    // 1. override / 2. PATH
+    if let Some(p) = resolve_override_or_path(cfg.ffmpeg_path.as_deref(), "FFMPEG_PATH", "ffmpeg")? {
         return Ok(p);
     }
     // 3. cache
-    let cached = bin_dir.join(local_name());
+    let cached = bin_dir.join(exe_name("ffmpeg"));
     if cached.is_file() {
         return Ok(cached);
     }

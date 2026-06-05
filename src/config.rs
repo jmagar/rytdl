@@ -55,8 +55,9 @@ impl Config {
     pub fn all_ssh_opts(&self) -> Vec<String> {
         DEFAULT_SSH_OPTS
             .iter()
-            .map(|s| s.to_string())
-            .chain(self.ssh_opts.iter().cloned())
+            .copied()
+            .chain(self.ssh_opts.iter().map(String::as_str))
+            .map(str::to_string)
             .collect()
     }
 }
