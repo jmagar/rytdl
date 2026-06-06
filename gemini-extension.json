@@ -1,7 +1,7 @@
 {
   "name": "ytdl-mcp",
   "version": "0.4.0",
-  "description": "Download audio/video from any yt-dlp-supported site, tag it, and rsync it to an SSH remote.",
+  "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "mcpServers": {
     "ytdl-mcp": {
       "command": "ytdl-mcp",
@@ -11,7 +11,7 @@
   "settings": [
     {
       "name": "SSH remote",
-      "description": "SSH alias or user@host to rsync downloads to (passwordless key auth).",
+      "description": "SSH alias or user@host to transfer downloads to (passwordless key auth).",
       "envVar": "YTDLP_REMOTE"
     },
     {
@@ -30,9 +30,44 @@
       "envVar": "YTDLP_AUDIO_FORMAT"
     },
     {
+      "name": "Extra SSH options",
+      "description": "Shell-word parsed SSH options, e.g. -i \"~/.ssh/ytdl key\" -o ProxyJump=media-bastion. Malformed quoting is rejected. Optional.",
+      "envVar": "YTDLP_SSH_OPTS"
+    },
+    {
       "name": "yt-dlp extractor args",
       "description": "Passed to yt-dlp's --extractor-args, e.g. youtube:player_client=android. Optional.",
       "envVar": "YTDLP_EXTRACTOR_ARGS"
+    },
+    {
+      "name": "yt-dlp timeout seconds",
+      "description": "Maximum runtime for each yt-dlp probe/download command. Default: 1800.",
+      "envVar": "YTDLP_TIMEOUT_SECS"
+    },
+    {
+      "name": "Transfer timeout seconds",
+      "description": "Maximum runtime budget for each transfer phase. Default: 600.",
+      "envVar": "YTDLP_TRANSFER_TIMEOUT_SECS"
+    },
+    {
+      "name": "yt-dlp path",
+      "description": "Use a specific yt-dlp executable instead of auto-resolution/auto-download. Optional.",
+      "envVar": "YTDLP_PATH"
+    },
+    {
+      "name": "ffmpeg path",
+      "description": "Use a specific ffmpeg executable instead of auto-resolution/auto-download. Optional.",
+      "envVar": "FFMPEG_PATH"
+    },
+    {
+      "name": "yt-dlp SHA-256 pin",
+      "description": "Optional SHA-256 digest required for the resolved yt-dlp executable.",
+      "envVar": "YTDLP_SHA256"
+    },
+    {
+      "name": "ffmpeg SHA-256 pin",
+      "description": "Optional SHA-256 digest required for the resolved ffmpeg executable.",
+      "envVar": "FFMPEG_SHA256"
     }
   ]
 }

@@ -44,7 +44,7 @@ pub async fn run() -> Result<()> {
 
     // 1. Install/verify yt-dlp + ffmpeg.
     eprintln!("Checking yt-dlp + ffmpeg…");
-    let cfg = Config::from_env();
+    let cfg = Config::from_env_result()?;
     let tools = tokio::task::spawn_blocking(move || bootstrap::ensure(&cfg)).await??;
     eprintln!("  yt-dlp:  {}", tools.ytdlp.display());
     eprintln!(

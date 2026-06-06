@@ -5,17 +5,20 @@
 //! and reads back what it produced via `--print after_move:`.
 
 use std::path::{Path, PathBuf};
+use std::process::{ExitStatus, Stdio};
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::bootstrap::Tools;
 use crate::model::{AudioFormat, DownloadMode, VideoContainer};
-use crate::util::command_error;
 
 /// Field separator embedded in the `--print` template (unit separator, unlikely
 /// to appear in titles).
 const SEP: char = '\u{1f}';
+const STDERR_TAIL_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct MediaFile {
@@ -34,6 +37,25 @@ pub struct ItemResult {
     pub is_playlist: bool,
     pub files: Vec<MediaFile>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FetchOptions<'a> {
+    pub mode: DownloadMode,
+    pub staging: &'a Path,
+    pub audio_format: AudioFormat,
+    pub audio_quality: &'a str,
+    pub container: VideoContainer,
+    pub max_height: Option<u32>,
+    pub archive_dir: Option<&'a Path>,
+    pub timeout: Option<Duration>,
+}
+
+#[derive(Debug)]
+struct CommandOutput {
+    status: ExitStatus,
+    stdout: Vec<u8>,
+    stderr: String,
 }
 
 /// Non-greedy "Artist - Title" split applied to the title field so the artist
@@ -136,11 +158,14 @@ async fn run_pass(
     url: &str,
     args: Vec<String>,
     kind: &'static str,
+    timeout: Option<Duration>,
     result: &mut ItemResult,
 ) -> Result<()> {
-    let output = Command::new(ytdlp).args(&args).arg(url).output().await?;
+    let mut cmd = Command::new(ytdlp);
+    cmd.args(&args).arg(url);
+    let output = run_command(&mut cmd, timeout).await?;
     if !output.status.success() {
-        anyhow::bail!("{}", command_error(&output));
+        bail!("{}", command_error_text(&output.stderr, &output.stdout));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -179,40 +204,54 @@ async fn run_pass(
 /// Download one URL per `mode`, returning the per-URL outcome. `mode = both`
 /// runs two passes (video then audio) into their own staging subdirs.
 #[allow(clippy::too_many_arguments)]
-pub async fn fetch(
-    tools: &Tools,
-    url: &str,
-    mode: DownloadMode,
-    staging: &Path,
-    audio_format: AudioFormat,
-    audio_quality: &str,
-    container: VideoContainer,
-    max_height: Option<u32>,
-    archive_dir: Option<&Path>,
-) -> ItemResult {
+pub async fn fetch(tools: &Tools, url: &str, options: FetchOptions<'_>) -> ItemResult {
     let mut result = ItemResult {
         url: url.to_string(),
         ..Default::default()
     };
 
-    if matches!(mode, DownloadMode::Video | DownloadMode::Both) {
-        let archive = archive_dir.map(|d| d.join("archive-video.txt"));
-        let args = video_args(staging, container, max_height, tools, archive.as_deref());
-        if let Err(e) = run_pass(&tools.ytdlp, url, args, "video", &mut result).await {
+    if matches!(options.mode, DownloadMode::Video | DownloadMode::Both) {
+        let archive = options.archive_dir.map(|d| d.join("archive-video.txt"));
+        let args = video_args(
+            options.staging,
+            options.container,
+            options.max_height,
+            tools,
+            archive.as_deref(),
+        );
+        if let Err(e) = run_pass(
+            &tools.ytdlp,
+            url,
+            args,
+            "video",
+            options.timeout,
+            &mut result,
+        )
+        .await
+        {
             result.error = Some(e.to_string());
             return result;
         }
     }
-    if matches!(mode, DownloadMode::Audio | DownloadMode::Both) {
-        let archive = archive_dir.map(|d| d.join("archive-audio.txt"));
+    if matches!(options.mode, DownloadMode::Audio | DownloadMode::Both) {
+        let archive = options.archive_dir.map(|d| d.join("archive-audio.txt"));
         let args = audio_args(
-            staging,
-            audio_format,
-            audio_quality,
+            options.staging,
+            options.audio_format,
+            options.audio_quality,
             tools,
             archive.as_deref(),
         );
-        if let Err(e) = run_pass(&tools.ytdlp, url, args, "audio", &mut result).await {
+        if let Err(e) = run_pass(
+            &tools.ytdlp,
+            url,
+            args,
+            "audio",
+            options.timeout,
+            &mut result,
+        )
+        .await
+        {
             result.error = Some(e.to_string());
             return result;
         }
@@ -235,7 +274,12 @@ pub struct ProbeResult {
 
 /// Resolve metadata for a URL without downloading (`yt-dlp -J --skip-download`).
 /// Takes just the yt-dlp path — probe never needs ffmpeg.
-pub async fn probe(ytdlp: &Path, url: &str, extractor_args: Option<&str>) -> ProbeResult {
+pub async fn probe(
+    ytdlp: &Path,
+    url: &str,
+    extractor_args: Option<&str>,
+    timeout: Option<Duration>,
+) -> ProbeResult {
     let mut r = ProbeResult {
         url: url.to_string(),
         ..Default::default()
@@ -245,7 +289,8 @@ pub async fn probe(ytdlp: &Path, url: &str, extractor_args: Option<&str>) -> Pro
     if let Some(extra) = extractor_args {
         cmd.arg("--extractor-args").arg(extra);
     }
-    let output = match cmd.arg(url).output().await {
+    cmd.arg(url);
+    let output = match run_command(&mut cmd, timeout).await {
         Ok(o) => o,
         Err(e) => {
             r.error = Some(e.to_string());
@@ -253,7 +298,7 @@ pub async fn probe(ytdlp: &Path, url: &str, extractor_args: Option<&str>) -> Pro
         }
     };
     if !output.status.success() {
-        r.error = Some(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        r.error = Some(output.stderr.trim().to_string());
         return r;
     }
     let info: serde_json::Value = match serde_json::from_slice(&output.stdout) {
@@ -294,3 +339,82 @@ fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
         .map(ToOwned::to_owned)
         .filter(|s| !s.is_empty())
 }
+
+fn command_error_text(stderr: &str, stdout: &[u8]) -> String {
+    let err = stderr.trim();
+    if err.is_empty() {
+        String::from_utf8_lossy(stdout).trim().to_string()
+    } else {
+        err.to_string()
+    }
+}
+
+async fn run_command(cmd: &mut Command, timeout: Option<Duration>) -> Result<CommandOutput> {
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = cmd.spawn()?;
+    let mut stdout = child.stdout.take().expect("stdout piped");
+    let mut stderr = child.stderr.take().expect("stderr piped");
+
+    let stdout_task = tokio::spawn(async move {
+        let mut out = Vec::new();
+        stdout.read_to_end(&mut out).await.map(|_| out)
+    });
+    let stderr_task = tokio::spawn(async move {
+        let mut buf = [0_u8; 8192];
+        let mut tail = Vec::new();
+        loop {
+            let read = stderr.read(&mut buf).await?;
+            if read == 0 {
+                break;
+            }
+            append_tail(&mut tail, &buf[..read], STDERR_TAIL_BYTES);
+        }
+        Ok::<_, std::io::Error>(stderr_tail_text(&tail, STDERR_TAIL_BYTES))
+    });
+
+    let status = if let Some(limit) = timeout {
+        match tokio::time::timeout(limit, child.wait()).await {
+            Ok(status) => status?,
+            Err(_) => {
+                let _ = child.kill().await;
+                bail!("command timed out after {}s", limit.as_secs());
+            }
+        }
+    } else {
+        child.wait().await?
+    };
+
+    let stdout = stdout_task.await??;
+    let stderr = stderr_task.await??;
+    Ok(CommandOutput {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn append_tail(tail: &mut Vec<u8>, chunk: &[u8], limit: usize) {
+    tail.extend_from_slice(chunk);
+    if tail.len() > limit {
+        let excess = tail.len() - limit;
+        tail.drain(..excess);
+    }
+}
+
+fn stderr_tail_text(bytes: &[u8], limit: usize) -> String {
+    let truncated = bytes.len() >= limit;
+    let mut text = String::from_utf8_lossy(bytes).to_string();
+    if truncated {
+        if let Some(pos) = text.find('\n') {
+            text.drain(..=pos);
+        }
+        text.insert_str(0, "[stderr truncated]\n");
+    }
+    text
+}
+
+#[cfg(test)]
+#[path = "downloader_tests.rs"]
+mod tests;

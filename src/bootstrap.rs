@@ -11,9 +11,10 @@ mod ytdlp;
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use directories::ProjectDirs;
 use fs2::FileExt;
+use sha2::{Digest, Sha256};
 
 use crate::config::Config;
 
@@ -67,6 +68,18 @@ pub(crate) fn resolve_override_or_path(
         anyhow::bail!("{env_var} does not exist: {p}");
     }
     Ok(which::which(bin_name).ok())
+}
+
+pub(crate) fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<()> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != expected {
+        bail!(
+            "{label} checksum mismatch for {}: expected {expected}, got {actual}",
+            path.display()
+        );
+    }
+    Ok(())
 }
 
 /// Resolve yt-dlp only (no ffmpeg) — used by the read-only probe path so it

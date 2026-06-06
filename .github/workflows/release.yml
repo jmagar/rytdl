@@ -10,7 +10,19 @@ permissions:
   contents: write
 
 jobs:
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install packaging check tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq shellcheck
+      - name: Validate plugin packaging
+        run: REQUIRE_SHELLCHECK=1 scripts/check-packaging.sh
+
   build:
+    needs: packaging
     strategy:
       matrix:
         include:

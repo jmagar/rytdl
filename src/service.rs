@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::bootstrap;
 use crate::config::Config;
-use crate::downloader::{self, ItemResult, ProbeResult};
+use crate::downloader::{self, FetchOptions, ItemResult, ProbeResult};
 use crate::model::{DownloadInput, ProbeInput, ResponseFormat};
 use crate::urls::strip_mix_params;
 
@@ -34,7 +34,8 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
     let Some(audio_dest) = audio_dest else {
         bail!("No destination. Pass 'dest_path' or set YTDLP_REMOTE_PATH.");
     };
-    let video_dest = video_dest.unwrap_or_else(|| audio_dest.clone());
+    let target =
+        crate::transfer::TransferTarget::parse(&remote, &audio_dest, video_dest.as_deref())?;
 
     let tools = ensure_tools(cfg).await?;
 
@@ -73,13 +74,16 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         let r = downloader::fetch(
             &tools,
             &url,
-            input.mode,
-            &staging_path,
-            audio_format,
-            &input.audio_quality,
-            input.container,
-            input.max_height,
-            archive_dir.as_deref(),
+            FetchOptions {
+                mode: input.mode,
+                staging: &staging_path,
+                audio_format,
+                audio_quality: &input.audio_quality,
+                container: input.container,
+                max_height: input.max_height,
+                archive_dir: archive_dir.as_deref(),
+                timeout: Some(cfg.ytdlp_timeout()),
+            },
         )
         .await;
         results.push(r);
@@ -103,24 +107,40 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
     // The destination each kind actually produced files for — drives both the
     // transfer loop and the reported destination(s).
     let has_kind = |k: &str| results.iter().flat_map(|r| &r.files).any(|f| f.kind == k);
-    let mut dests: Vec<(&str, &str)> = Vec::new();
+    let mut transfer_dests: Vec<(&str, &crate::transfer::RemotePath)> = Vec::new();
     if has_kind("audio") {
-        dests.push(("audio", &audio_dest));
+        transfer_dests.push(("audio", target.audio_dest()));
     }
     if has_kind("video") {
-        dests.push(("video", &video_dest));
+        transfer_dests.push(("video", target.video_dest()));
     }
+    let dests: Vec<(&str, &str)> = transfer_dests
+        .iter()
+        .map(|(kind, dest)| (*kind, dest.as_str()))
+        .collect();
 
     // Transfer each kind to its own destination.
     let mut transfer_error: Option<String> = None;
-    for (kind, dest) in &dests {
+    for (kind, dest) in &transfer_dests {
         let kind_dir = staging_path.join(kind);
         if !kind_dir.is_dir() {
             continue;
         }
-        if let Err(e) = transfer_kind(&kind_dir, &remote, dest, &cfg.all_ssh_opts()).await {
-            transfer_error = Some(e.to_string());
-            break;
+        let ssh_opts = cfg.all_ssh_opts();
+        let transfer = transfer_kind(&kind_dir, target.remote(), dest, &ssh_opts);
+        match tokio::time::timeout(cfg.transfer_timeout(), transfer).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                transfer_error = Some(e.to_string());
+                break;
+            }
+            Err(_) => {
+                transfer_error = Some(format!(
+                    "transfer of {kind} timed out after {}s",
+                    cfg.transfer_timeout().as_secs()
+                ));
+                break;
+            }
         }
     }
 
@@ -136,7 +156,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
 
     let payload = download_payload(
         &results,
-        &remote,
+        target.remote().as_str(),
         &dests,
         transferred,
         transfer_error.clone(),
@@ -149,7 +169,12 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
     ))
 }
 
-async fn transfer_kind(dir: &Path, remote: &str, dest: &str, ssh_opts: &[String]) -> Result<()> {
+async fn transfer_kind(
+    dir: &Path,
+    remote: &crate::transfer::RemoteSpec,
+    dest: &crate::transfer::RemotePath,
+    ssh_opts: &[String],
+) -> Result<()> {
     crate::transfer::ensure_remote_dir(remote, dest, ssh_opts).await?;
     crate::transfer::transfer(dir, remote, dest, ssh_opts).await
 }
@@ -171,7 +196,15 @@ pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
     let mut results = Vec::new();
     for raw in input.urls.into_vec() {
         let url = strip_mix_params(&raw);
-        results.push(downloader::probe(&ytdlp, &url, cfg.extractor_args.as_deref()).await);
+        results.push(
+            downloader::probe(
+                &ytdlp,
+                &url,
+                cfg.extractor_args.as_deref(),
+                Some(cfg.ytdlp_timeout()),
+            )
+            .await,
+        );
     }
     let payload = probe_payload(&results);
     Ok(render(
@@ -207,8 +240,20 @@ fn download_payload(
     let items: Vec<serde_json::Value> = results
         .iter()
         .map(|r| {
+            let status = if r.error.is_some() {
+                if r.files.is_empty() {
+                    "failed"
+                } else {
+                    "partial"
+                }
+            } else if r.files.is_empty() {
+                "skipped"
+            } else {
+                "ok"
+            };
             json!({
                 "url": r.url,
+                "status": status,
                 "title": r.title,
                 "video_id": r.video_id,
                 "duration": r.duration,
@@ -225,6 +270,14 @@ fn download_payload(
         .collect();
     let total_files: usize = results.iter().map(|r| r.files.len()).sum();
     let total_bytes: u64 = results.iter().flat_map(|r| &r.files).map(|f| f.size).sum();
+    let partial_items = results
+        .iter()
+        .filter(|r| r.error.is_some() && !r.files.is_empty())
+        .count();
+    let failed_items = results
+        .iter()
+        .filter(|r| r.error.is_some() && r.files.is_empty())
+        .count();
     // Primary dest_path = first kind's path (audio in the common case); the full
     // per-kind breakdown is in `destinations`, and the human string lists all.
     // When nothing was transferred (archive hit) there's no destination at all.
@@ -253,6 +306,8 @@ fn download_payload(
         "total_files": total_files,
         "total_bytes": total_bytes,
         "total_size": human_size(total_bytes),
+        "partial_items": partial_items,
+        "failed_items": failed_items,
         "items": items,
     })
 }
@@ -298,7 +353,8 @@ fn render_download_markdown(p: &serde_json::Value) -> String {
     }
     lines.push(String::new());
     for item in p["items"].as_array().into_iter().flatten() {
-        if let Some(err) = item["error"].as_str() {
+        let files = item["files"].as_array().cloned().unwrap_or_default();
+        if let Some(err) = item["error"].as_str().filter(|_| files.is_empty()) {
             lines.push(format!(
                 "- {} - failed: {err}",
                 item["url"].as_str().unwrap_or("")
@@ -313,14 +369,17 @@ fn render_download_markdown(p: &serde_json::Value) -> String {
         } else {
             ""
         };
-        let files = item["files"].as_array().cloned().unwrap_or_default();
         if files.is_empty() {
             lines.push(format!(
                 "- {title}{suffix} - nothing new (already archived)"
             ));
             continue;
         }
-        lines.push(format!("- {title}{suffix}"));
+        if let Some(err) = item["error"].as_str() {
+            lines.push(format!("- {title}{suffix} - partially completed: {err}"));
+        } else {
+            lines.push(format!("- {title}{suffix}"));
+        }
         for f in files {
             lines.push(format!(
                 "    - [{}] {} ({})",
@@ -393,3 +452,7 @@ fn human_duration(seconds: Option<f64>) -> String {
         format!("{m}:{sec:02}")
     }
 }
+
+#[cfg(test)]
+#[path = "service_tests.rs"]
+mod tests;

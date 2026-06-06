@@ -42,6 +42,7 @@ clap = { version = "4", features = ["derive"] }
 
 # Errors + logging (logging MUST go to stderr — stdout is the JSON-RPC channel)
 anyhow = "1"
+shell-words = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -58,6 +59,7 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 ffmpeg-sidecar = "2.5.2"
 fs2 = "0.4.3"
 dialoguer = { version = "0.12.0", default-features = false }
+sha2 = "0.10"
 
 [profile.release]
 strip = true

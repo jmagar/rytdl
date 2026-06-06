@@ -88,6 +88,9 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 
 - **Claude Code plugin** — `.claude-plugin/plugin.json` prompts for config via
   `userConfig` and downloads the release binary into the plugin data dir.
+  Release checksums are required; `YTDL_MCP_ALLOW_MISSING_CHECKSUM=1` is only
+  for compatibility testing with older/manual releases that lack `.sha256`
+  files.
 - **Gemini CLI extension** — `gemini-extension.json`; install with
   `gemini extensions install https://github.com/jmagar/ytdl-mcp` (needs the
   binary on `PATH`).
@@ -101,14 +104,32 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 | `YTDLP_VIDEO_REMOTE_PATH` | falls back to audio | Absolute remote dir for **video**. |
 | `YTDLP_AUDIO_FORMAT` | `mp3` | Default audio codec. |
 | `YTDLP_STAGING_DIR` | system temp | Local staging base dir. |
-| `YTDLP_SSH_OPTS` | — | Extra ssh options (space-separated; appended after the forced `BatchMode`/`StrictHostKeyChecking` flags). |
+| `YTDLP_SSH_OPTS` | — | Extra ssh options parsed with shell-word syntax; appended after the forced `BatchMode`/`StrictHostKeyChecking` flags. Example: `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is rejected. |
 | `YTDLP_ARCHIVE_DIR` | per-user state dir | Where `use_archive` history lives. |
 | `YTDLP_AUTO_UPDATE` | `1` | Re-download yt-dlp when stale. |
 | `YTDLP_MAX_AGE_DAYS` | `14` | Staleness threshold (days). |
 | `YTDLP_UPDATE_PRE` | `0` | Track yt-dlp's nightly channel. |
 | `YTDLP_EXTRACTOR_ARGS` | — | Passed to yt-dlp `--extractor-args`, e.g. `youtube:player_client=android` for videos the default clients can't reach. |
+| `YTDLP_TIMEOUT_SECS` | `1800` | Timeout for each yt-dlp probe/download command. |
+| `YTDLP_TRANSFER_TIMEOUT_SECS` | `600` | Timeout for each transfer phase. |
+| `YTDLP_SHA256` / `FFMPEG_SHA256` | — | Optional SHA-256 digest required for the resolved yt-dlp / ffmpeg executable. |
 | `YTDLP_PATH` / `FFMPEG_PATH` | — | Use a specific yt-dlp / ffmpeg instead of auto-download. |
 | `YTDLP_LOG` | `info` | `tracing` filter (stderr only). |
+
+### Bootstrap trust model
+
+By default, first run resolves tools in this order: explicit env override,
+`PATH`, cache, then HTTPS download from the upstream release source. Set
+`YTDLP_SHA256` and/or `FFMPEG_SHA256` to require an exact executable digest
+after resolution or download. These pins verify bytes on disk, but they do not
+fetch upstream signatures or automatically discover trusted digests; operators
+who need a fully pinned supply chain should provide known-good binaries through
+`YTDLP_PATH` / `FFMPEG_PATH` plus matching SHA-256 pins, or disable yt-dlp
+auto-update.
+
+For stricter bootstrap control, combine `YTDLP_PATH` / `FFMPEG_PATH` with
+matching `YTDLP_SHA256` / `FFMPEG_SHA256` pins. Hash pins verify the resolved
+executable bytes; they are not upstream signature verification.
 
 ## Requirements
 
@@ -129,15 +150,27 @@ cargo install cargo-xwin
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
+On dookie/local shells, `~/.local/bin/cargo` is a wrapper that can break
+`cargo xwin`; use the real rustup cargo for local Windows rehearsals:
+
+```bash
+~/.cargo/bin/cargo xwin build --release --target x86_64-pc-windows-msvc
+```
+
 CI (`.github/workflows/`) runs fmt + clippy + tests and a Windows cross-build on
 every push/PR, and publishes both binaries to a GitHub Release on `v*` tags.
+
+This crate intentionally remains on Rust edition 2021 for the distributable
+single-binary/plugin build. Move to edition 2024 only after proving Linux,
+Windows MSVC cross-build, and plugin startup compatibility together.
 
 ## How it works
 
 Bare invocation serves MCP over stdio; `setup` runs the installer. A
 `youtube_download` call:
 
-1. Resolves yt-dlp + ffmpeg (env override → PATH → cache → download).
+1. Resolves yt-dlp + ffmpeg (env override → PATH → cache → download) and
+   verifies SHA-256 pins when configured.
 2. Cleans mix/radio URLs, then runs yt-dlp per mode into a staging tree
    (`staging/audio`, `staging/video`) with metadata/thumbnail/archive flags and
    the `Artist/Title [id]` output template.

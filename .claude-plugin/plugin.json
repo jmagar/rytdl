@@ -1,7 +1,7 @@
 {
   "name": "ytdl-mcp",
   "version": "0.4.0",
-  "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and rsync to an SSH remote.",
+  "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
   "author": {
     "name": "Jacob Magar"
   },
@@ -18,7 +18,7 @@
     "remote": {
       "type": "string",
       "title": "SSH remote",
-      "description": "SSH alias (~/.ssh/config) or user@host to rsync downloads to. Passwordless key auth required.",
+      "description": "SSH alias (~/.ssh/config) or user@host to transfer downloads to. Passwordless key auth required.",
       "required": true
     },
     "audio_dest_path": {
@@ -42,7 +42,7 @@
     "ssh_opts": {
       "type": "string",
       "title": "Extra SSH options",
-      "description": "Additional ssh options, space-separated (appended after -o BatchMode=yes). Optional.",
+      "description": "Additional ssh options parsed with shell-word syntax, e.g. -i \"~/.ssh/ytdl key\" -o ProxyJump=media-bastion. Appended after -o BatchMode=yes. Malformed quoting is rejected. Optional.",
       "required": false
     },
     "staging_dir": {
@@ -54,7 +54,7 @@
     "archive_dir": {
       "type": "directory",
       "title": "Download archive dir",
-      "description": "Where the use_archive download history lives. Defaults to ~/.local/state/youtube_dl_mcp.",
+      "description": "Where the use_archive download history lives. Defaults to the per-user state dir, usually ~/.local/state/ytdl-mcp.",
       "required": false
     },
     "auto_update": {
@@ -81,6 +81,44 @@
       "type": "string",
       "title": "yt-dlp extractor args",
       "description": "Passed to yt-dlp's --extractor-args, e.g. 'youtube:player_client=android' for videos the default clients can't reach. Optional.",
+      "required": false
+    },
+    "ytdlp_path": {
+      "type": "string",
+      "title": "yt-dlp path",
+      "description": "Use a specific yt-dlp executable instead of auto-resolution/auto-download. Optional.",
+      "required": false
+    },
+    "ffmpeg_path": {
+      "type": "string",
+      "title": "ffmpeg path",
+      "description": "Use a specific ffmpeg executable instead of auto-resolution/auto-download. Optional.",
+      "required": false
+    },
+    "ytdlp_timeout_secs": {
+      "type": "number",
+      "title": "yt-dlp timeout (seconds)",
+      "description": "Maximum runtime for each yt-dlp probe/download command.",
+      "default": 1800,
+      "min": 1
+    },
+    "transfer_timeout_secs": {
+      "type": "number",
+      "title": "Transfer timeout (seconds)",
+      "description": "Maximum runtime budget for each transfer phase.",
+      "default": 600,
+      "min": 1
+    },
+    "ytdlp_sha256": {
+      "type": "string",
+      "title": "yt-dlp SHA-256 pin",
+      "description": "Optional SHA-256 digest required for the resolved yt-dlp executable.",
+      "required": false
+    },
+    "ffmpeg_sha256": {
+      "type": "string",
+      "title": "ffmpeg SHA-256 pin",
+      "description": "Optional SHA-256 digest required for the resolved ffmpeg executable.",
       "required": false
     }
   }

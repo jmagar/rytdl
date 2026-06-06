@@ -15,11 +15,17 @@ pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     // 1. override / 2. PATH
     if let Some(p) = resolve_override_or_path(cfg.ffmpeg_path.as_deref(), "FFMPEG_PATH", "ffmpeg")?
     {
+        if let Some(expected) = &cfg.ffmpeg_sha256 {
+            super::verify_sha256(&p, expected, "ffmpeg")?;
+        }
         return Ok(p);
     }
     // 3. cache
     let cached = bin_dir.join(exe_name("ffmpeg"));
     if cached.is_file() {
+        if let Some(expected) = &cfg.ffmpeg_sha256 {
+            super::verify_sha256(&cached, expected, "ffmpeg")?;
+        }
         return Ok(cached);
     }
     // 4. download + unpack into the cache dir
@@ -28,6 +34,9 @@ pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     let archive = download_ffmpeg_package(url, bin_dir).context("download ffmpeg package")?;
     unpack_ffmpeg(&archive, bin_dir).context("unpack ffmpeg")?;
     if cached.is_file() {
+        if let Some(expected) = &cfg.ffmpeg_sha256 {
+            super::verify_sha256(&cached, expected, "ffmpeg")?;
+        }
         Ok(cached)
     } else {
         anyhow::bail!("ffmpeg not found at {} after unpack", cached.display())

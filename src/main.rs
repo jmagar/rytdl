@@ -60,7 +60,7 @@ fn init_tracing() {
 }
 
 async fn serve() -> Result<()> {
-    let cfg = Config::from_env();
+    let cfg = Config::from_env_result()?;
     tracing::info!("ytdl-mcp serving over stdio");
     let service = YtdlServer::new(cfg).serve(stdio()).await?;
     service.waiting().await?;

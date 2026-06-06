@@ -47,6 +47,7 @@ cargo fmt --all --check                       # CI gates on this
 cargo xwin build --release --target x86_64-pc-windows-msvc
 ```
 
+The plain `cargo xwin` form above is correct for CI and ordinary shells.
 **GOTCHA — the cargo wrapper.** `~/.local/bin/cargo` is a wrapper that runs
 builds inside a constrained systemd slice and breaks `cargo xwin` (manifests as
 `error[E0463]: can't find crate for std` on one dep). For cross-compilation,
@@ -57,6 +58,17 @@ invoke the real rustup cargo directly: `~/.cargo/bin/cargo xwin build …`.
 - **TLS / cross-compile**: downloads use `ureq` 3 with `rustls`+**ring** (NOT
   aws-lc). ffmpeg-sidecar piggybacks on the same ureq. Verify after any dep bump:
   `cargo tree -i aws-lc-sys` must be empty, or the Windows build breaks.
+- **Bootstrap trust**: `YTDLP_SHA256` and `FFMPEG_SHA256` optionally pin the
+  resolved executable bytes. This is hash pinning, not upstream signature
+  verification; known-good binaries plus `YTDLP_PATH` / `FFMPEG_PATH` are the
+  strictest supported mode.
+- **Timeouts**: `YTDLP_TIMEOUT_SECS` defaults to 1800 and is enforced for
+  yt-dlp download/probe commands. `YTDLP_TRANSFER_TIMEOUT_SECS` defaults to 600
+  and is enforced around each transfer phase from `service.rs`.
+- **Rust edition 2021 is intentional for now**: this is a distributable
+  single-binary MCP/plugin that is cross-built for Linux and Windows MSVC. Do not
+  migrate to edition 2024 unless Linux checks, Windows xwin build, and plugin
+  startup are all verified together.
 - **`--windows-filenames` is always on** so the `Artist/Title [id]` layout is
   identical across OSes. Side effect: a trailing `.` in a name (e.g. "Disney Jr.")
   becomes "Disney Jr.#".

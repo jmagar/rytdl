@@ -1,19 +1,19 @@
 ---
 name: ytdl
-description: Download audio or video from YouTube, Vimeo, or any yt-dlp-supported site and rsync it to a configured SSH remote. Use when the user wants to grab/download/save/rip a song, video, album, playlist, or channel from a URL, pull audio off a YouTube link, or archive media to their server. Triggers on "download this", "grab the audio", "rip this playlist", "save this video", or any media URL the user wants pulled.
+description: Download audio or video from YouTube, Vimeo, or any yt-dlp-supported site and transfer it to a configured SSH remote. Use when the user wants to grab/download/save/rip a song, video, album, playlist, or channel from a URL, pull audio off a YouTube link, or archive media to their server. Triggers on "download this", "grab the audio", "rip this playlist", "save this video", or any media URL the user wants pulled.
 ---
 
 # yt-dlp Downloader
 
 Download media from any [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported site as
-audio, video, or both, embed proper metadata + cover art, and rsync the result to an
-SSH remote configured when the plugin was enabled.
+audio, video, or both, embed proper metadata + cover art, and transfer the result
+to an SSH remote configured when the plugin was enabled.
 
 Two MCP tools are provided by the bundled `youtube-dl` server:
 
 | Tool | Purpose |
 | --- | --- |
-| `youtube_download` | Download one or more URLs and rsync them to the remote. |
+| `youtube_download` | Download one or more URLs and transfer them to the remote with rsync or scp. |
 | `youtube_probe` | Read-only: resolve title/duration/uploader/format counts without downloading. |
 
 ## Defaults
@@ -68,9 +68,31 @@ youtube_probe(urls="https://...")
   on success it is removed unless `keep_local=true`.
 - yt-dlp auto-updates at server startup when stale (configurable), so a fresh session
   self-heals against extractor breakage.
+- yt-dlp and ffmpeg are resolved automatically: explicit env path, then `PATH`,
+  then the per-user cache, then runtime download. Use `YTDLP_PATH` and
+  `FFMPEG_PATH` only when you need known local binaries.
+
+## Operational controls
+
+- `YTDLP_TIMEOUT_SECS` controls each yt-dlp probe/download command timeout
+  (default: 1800).
+- `YTDLP_TRANSFER_TIMEOUT_SECS` controls each SSH transfer phase timeout
+  (default: 600).
+- `YTDLP_PATH` and `FFMPEG_PATH` override auto-resolution/auto-download with
+  specific local binaries.
+- `YTDLP_SHA256` and `FFMPEG_SHA256` optionally require exact SHA-256 digests for
+  the resolved yt-dlp and ffmpeg executables.
+- `YTDLP_EXTRACTOR_ARGS` is passed to yt-dlp `--extractor-args`, for example
+  `youtube:player_client=android` when the default YouTube clients cannot fetch
+  a video.
+- `YTDLP_SSH_OPTS` adds extra SSH options using shell-word syntax, for example
+  `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is
+  rejected.
 
 ## Requirements (on the host running this plugin)
 
-- **ffmpeg** — audio extraction, merging, metadata/cover-art embedding
-- **rsync** and **ssh** (openssh-client)
+- **ssh** / openssh-client
 - Passwordless key-based SSH auth to the configured remote
+- **rsync** is optional; transfers fall back to **scp** when rsync is unavailable
+- yt-dlp and ffmpeg are auto-resolved/auto-downloaded unless overridden with
+  `YTDLP_PATH` / `FFMPEG_PATH`

@@ -42,9 +42,10 @@ tmp="$BIN.part"
 log "downloading $asset"
 fetch "$url" "$tmp"
 
-# Verify against the release's published checksum when present (releases built
-# by .github/workflows/release.yml publish <asset>.sha256). Best-effort: if a
-# release has no checksum, warn and proceed rather than hard-fail.
+# Verify against the release's published checksum. Current releases built by
+# .github/workflows/release.yml publish <asset>.sha256, so a missing checksum is
+# treated as an install failure. Set YTDL_MCP_ALLOW_MISSING_CHECKSUM=1 only for
+# compatibility testing with older/manual releases that predate checksum files.
 expected=$(fetch "$url.sha256" - 2>/dev/null | awk '{print $1}') || true
 if [ -n "$expected" ]; then
   actual=$(sha256sum "$tmp" | awk '{print $1}')
@@ -55,7 +56,14 @@ if [ -n "$expected" ]; then
   fi
   log "checksum verified"
 else
-  log "no published checksum for $asset; skipping verification"
+  if [ "${YTDL_MCP_ALLOW_MISSING_CHECKSUM:-}" = "1" ]; then
+    log "no published checksum for $asset; continuing because YTDL_MCP_ALLOW_MISSING_CHECKSUM=1"
+  else
+    rm -f "$tmp"
+    log "no published checksum for $asset; refusing to install"
+    log "set YTDL_MCP_ALLOW_MISSING_CHECKSUM=1 only for compatibility testing with older/manual releases"
+    exit 1
+  fi
 fi
 
 chmod 0755 "$tmp"

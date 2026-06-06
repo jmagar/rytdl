@@ -29,11 +29,17 @@ fn asset_name() -> &'static str {
 pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     // 1. override / 2. PATH
     if let Some(p) = resolve_override_or_path(cfg.ytdlp_path.as_deref(), "YTDLP_PATH", "yt-dlp")? {
+        if let Some(expected) = &cfg.ytdlp_sha256 {
+            super::verify_sha256(&p, expected, "yt-dlp")?;
+        }
         return Ok(p);
     }
     // 3 / 4. cache, downloading or refreshing as needed
     let cached = bin_dir.join(exe_name("yt-dlp"));
     if cached.is_file() && fresh_enough(&cached, cfg) {
+        if let Some(expected) = &cfg.ytdlp_sha256 {
+            super::verify_sha256(&cached, expected, "yt-dlp")?;
+        }
         return Ok(cached);
     }
     let base = if cfg.update_pre {
@@ -45,6 +51,9 @@ pub fn ensure(bin_dir: &Path, cfg: &Config) -> Result<PathBuf> {
     tracing::info!(%url, "downloading yt-dlp");
     http::download_to_file(&url, &cached)?;
     make_executable(&cached)?;
+    if let Some(expected) = &cfg.ytdlp_sha256 {
+        super::verify_sha256(&cached, expected, "yt-dlp")?;
+    }
     Ok(cached)
 }
 
