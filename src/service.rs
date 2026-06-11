@@ -104,8 +104,8 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
             bail!("Nothing was downloaded: {}", errs.join("; "));
         }
         // Archive hit / genuinely empty — succeed with a no-op summary.
-        let payload = download_payload(&results, &remote, &[], true, None, None);
-        crate::history::append_download(cfg, input.mode, &payload)?;
+        let mut payload = download_payload(&results, &remote, &[], true, None, None);
+        record_history(cfg, input.mode, &mut payload);
         return Ok(render(
             &payload,
             input.response_format,
@@ -163,7 +163,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         None
     };
 
-    let payload = download_payload(
+    let mut payload = download_payload(
         &results,
         target.remote().as_str(),
         &dests,
@@ -171,7 +171,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         transfer_error.clone(),
         staging_kept.as_deref(),
     );
-    crate::history::append_download(cfg, input.mode, &payload)?;
+    record_history(cfg, input.mode, &mut payload);
     Ok(render(
         &payload,
         input.response_format,
@@ -255,6 +255,13 @@ pub async fn run_search(cfg: &Config, input: SearchInput) -> Result<String> {
         input.response_format,
         render_search_markdown,
     ))
+}
+
+fn record_history(cfg: &Config, mode: crate::model::DownloadMode, payload: &mut serde_json::Value) {
+    if let Err(error) = crate::history::append_download(cfg, mode, payload) {
+        tracing::warn!(%error, "failed to append download history");
+        payload["history_error"] = serde_json::Value::String(error.to_string());
+    }
 }
 
 pub fn run_stats(cfg: &Config, input: StatsInput) -> Result<String> {

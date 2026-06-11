@@ -80,6 +80,12 @@ Review download totals and recent entries:
 youtube_stats(limit=10)
 ```
 
+When requesting JSON stats, expect top-level totals plus `skipped_entries`,
+`by_kind`, `by_uploader`, and `recent`. Bucket fields include `downloads`
+(compatibility alias for call count), `calls`, `items`, `files`, `bytes`, and
+`size`. Malformed ledger lines are skipped; successful downloads still return if
+the ledger append fails, with `history_error` included in JSON output.
+
 ## Notes
 
 - **YouTube mix/radio URLs** (`list=RD...`, `&start_radio=1`) are auto-cleaned to the

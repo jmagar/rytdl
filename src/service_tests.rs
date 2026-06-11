@@ -1,4 +1,4 @@
-use std::{ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, sync::OnceLock};
 
 use serde_json::json;
 
@@ -57,13 +57,18 @@ fn download_input(urls: Urls) -> DownloadInput {
     }
 }
 
+static PATH_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+async fn path_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    PATH_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await
+}
+
 #[tokio::test]
 async fn run_download_json_appends_history_entry_with_destination_and_files() {
-    use std::sync::OnceLock;
-    use tokio::sync::Mutex;
-
-    static PATH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let _guard = path_lock().await;
 
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");
@@ -115,6 +120,47 @@ async fn run_download_json_appends_history_entry_with_destination_and_files() {
     assert_eq!(entry["items"][0]["files"][0]["kind"], "video");
 }
 
+#[tokio::test]
+async fn run_download_json_reports_history_error_without_failing_download() {
+    let _guard = path_lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    let staging = dir.path().join("staging");
+    let bad_parent = dir.path().join("not-a-dir");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    std::fs::write(&bad_parent, "file blocks history parent").unwrap();
+    let fake = write_fake_runtime(&bin);
+
+    let _path = PathOverride::prepend(bin.clone());
+
+    let mut cfg = test_config();
+    cfg.ytdlp_path = Some(fake.ytdlp.display().to_string());
+    cfg.ffmpeg_path = Some(fake.ffmpeg.display().to_string());
+    cfg.staging_dir = Some(staging.display().to_string());
+    cfg.history_path = Some(bad_parent.join("downloads.jsonl").display().to_string());
+
+    let input = DownloadInput {
+        mode: DownloadMode::Video,
+        remote: Some("media".into()),
+        dest_path: Some("/audio".into()),
+        video_dest_path: Some("/video".into()),
+        response_format: ResponseFormat::Json,
+        ..download_input(Urls::One("https://www.youtube.com/watch?v=abc123".into()))
+    };
+
+    let output = run_download(&cfg, input).await.unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(payload["transferred"], true);
+    assert_eq!(payload["total_files"], 1);
+    assert!(payload["history_error"]
+        .as_str()
+        .unwrap()
+        .contains("create history directory"));
+}
+
 #[test]
 fn run_stats_json_summarizes_history_and_recent_entries() {
     let dir = tempfile::tempdir().unwrap();
@@ -146,10 +192,53 @@ fn run_stats_json_summarizes_history_and_recent_entries() {
     assert_eq!(value["total_bytes"], 60);
     assert_eq!(value["by_kind"]["audio"]["files"], 2);
     assert_eq!(value["by_kind"]["audio"]["downloads"], 2);
+    assert_eq!(value["by_kind"]["audio"]["calls"], 2);
     assert_eq!(value["by_kind"]["video"]["files"], 1);
     assert_eq!(value["by_kind"]["video"]["downloads"], 1);
+    assert_eq!(value["by_kind"]["video"]["calls"], 1);
     assert_eq!(value["by_uploader"]["Artist B"]["downloads"], 1);
+    assert_eq!(value["by_uploader"]["Artist B"]["calls"], 1);
+    assert_eq!(value["by_uploader"]["Artist B"]["items"], 1);
     assert_eq!(value["recent"].as_array().unwrap().len(), 1);
+    assert_eq!(value["recent"][0]["items"][0]["title"], "Video B");
+}
+
+#[test]
+fn run_stats_json_skips_malformed_lines_and_counts_uploader_calls_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("downloads.jsonl");
+    std::fs::write(
+        &history,
+        concat!(
+            "{\"timestamp\":\"2026-06-11T01:00:00Z\",\"mode\":\"audio\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":1,\"total_bytes\":10,\"items\":[{\"status\":\"ok\",\"title\":\"Song A\",\"uploader\":\"Artist A\",\"files\":[{\"kind\":\"audio\",\"bytes\":10}]}]}\n",
+            "this is not json\n",
+            "{\"timestamp\":\"2026-06-11T02:00:00Z\",\"mode\":\"both\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":3,\"total_bytes\":55,\"items\":[{\"status\":\"ok\",\"title\":\"Video B\",\"uploader\":\"Artist B\",\"files\":[{\"kind\":\"video\",\"bytes\":30},{\"kind\":\"audio\",\"bytes\":20}]},{\"status\":\"ok\",\"title\":\"Clip B\",\"uploader\":\"Artist B\",\"files\":[{\"kind\":\"audio\",\"bytes\":5}]}]}\n"
+        ),
+    )
+    .unwrap();
+
+    let mut cfg = test_config();
+    cfg.history_path = Some(history.display().to_string());
+
+    let output = run_stats(
+        &cfg,
+        StatsInput {
+            limit: 10,
+            response_format: ResponseFormat::Json,
+        },
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    assert_eq!(value["total_downloads"], 2);
+    assert_eq!(value["skipped_entries"], 1);
+    assert_eq!(value["total_files"], 4);
+    assert_eq!(value["total_bytes"], 65);
+    assert_eq!(value["by_uploader"]["Artist B"]["downloads"], 1);
+    assert_eq!(value["by_uploader"]["Artist B"]["calls"], 1);
+    assert_eq!(value["by_uploader"]["Artist B"]["items"], 2);
+    assert_eq!(value["by_uploader"]["Artist B"]["files"], 3);
+    assert_eq!(value["recent"].as_array().unwrap().len(), 2);
     assert_eq!(value["recent"][0]["items"][0]["title"], "Video B");
 }
 
@@ -316,11 +405,7 @@ async fn invalid_transfer_target_is_rejected_before_tool_resolution() {
 
 #[tokio::test]
 async fn run_download_json_reports_partial_status_with_fake_runtime() {
-    use std::sync::OnceLock;
-    use tokio::sync::Mutex;
-
-    static PATH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = PATH_LOCK.get_or_init(|| Mutex::new(())).lock().await;
+    let _guard = path_lock().await;
 
     let dir = tempfile::tempdir().unwrap();
     let bin = dir.path().join("bin");

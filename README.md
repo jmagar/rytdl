@@ -80,6 +80,14 @@ plus MCP App metadata for hosts that can render the embedded UI.
 | `limit` | `10` | Number of recent ledger entries to include, clamped to `0..=100`. |
 | `response_format` | `markdown` | `markdown` or `json`. |
 
+JSON stats include `total_downloads`, `total_files`, `total_bytes`,
+`skipped_entries`, `by_kind`, `by_uploader`, and `recent`. Bucket fields include
+`downloads` (compatibility alias for call count), `calls`, `items`, `files`,
+`bytes`, and human-readable `size`. Malformed ledger lines are skipped and
+counted instead of failing the whole stats call. If a download succeeds but the
+ledger append fails, the download response still succeeds and includes
+`history_error` in JSON output.
+
 ## Install
 
 Download the binary for your platform from

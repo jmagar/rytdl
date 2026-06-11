@@ -3,9 +3,9 @@
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::PathBuf;
 
 use crate::bootstrap;
@@ -65,49 +65,50 @@ pub(crate) fn append_download(cfg: &Config, mode: DownloadMode, payload: &Value)
 
 pub(crate) fn stats_payload(cfg: &Config, limit: usize) -> Result<Value> {
     let path = history_path(cfg);
-    let entries = read_entries(&path)?;
-    let total_downloads = entries.len();
+    let file = match std::fs::File::open(&path) {
+        Ok(file) => Some(file),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => {
+            return Err(error).with_context(|| format!("open history file {}", path.display()))
+        }
+    };
 
     let mut by_kind: BTreeMap<String, Bucket> = BTreeMap::new();
     let mut by_uploader: BTreeMap<String, Bucket> = BTreeMap::new();
+    let mut recent: VecDeque<Value> = VecDeque::new();
+    let mut total_downloads = 0_u64;
     let mut total_files = 0_u64;
     let mut total_bytes = 0_u64;
+    let mut skipped_entries = 0_u64;
 
-    for entry in &entries {
-        total_files += entry["total_files"].as_u64().unwrap_or(0);
-        total_bytes += entry["total_bytes"].as_u64().unwrap_or(0);
-        let mut entry_kinds = BTreeSet::new();
-
-        for item in entry["items"].as_array().into_iter().flatten() {
-            let uploader = item["uploader"].as_str().filter(|s| !s.is_empty());
-            if let Some(uploader) = uploader {
-                by_uploader
-                    .entry(uploader.to_string())
-                    .or_default()
-                    .downloads += 1;
+    if let Some(file) = file {
+        for line in BufReader::new(file).lines() {
+            let line = line.with_context(|| format!("read history file {}", path.display()))?;
+            if line.trim().is_empty() {
+                continue;
             }
-
-            for file in item["files"].as_array().into_iter().flatten() {
-                let kind = file["kind"].as_str().unwrap_or("unknown").to_string();
-                let bytes = file["bytes"].as_u64().unwrap_or(0);
-                entry_kinds.insert(kind.clone());
-                by_kind.entry(kind).or_default().add_file(bytes);
-                if let Some(uploader) = uploader {
-                    by_uploader
-                        .entry(uploader.to_string())
-                        .or_default()
-                        .add_file(bytes);
+            let entry: Value = match serde_json::from_str(&line) {
+                Ok(entry) => entry,
+                Err(error) => {
+                    skipped_entries += 1;
+                    tracing::warn!(%error, "skipping malformed download history entry");
+                    continue;
                 }
+            };
+            total_downloads += 1;
+            accumulate_entry(
+                &entry,
+                &mut by_kind,
+                &mut by_uploader,
+                &mut total_files,
+                &mut total_bytes,
+            );
+            if limit > 0 {
+                recent.push_front(entry);
+                recent.truncate(limit);
             }
-        }
-
-        for kind in entry_kinds {
-            by_kind.entry(kind).or_default().downloads += 1;
         }
     }
-
-    let mut recent: Vec<Value> = entries.into_iter().rev().take(limit).collect();
-    recent.shrink_to_fit();
 
     Ok(json!({
         "history_path": path.display().to_string(),
@@ -115,10 +116,58 @@ pub(crate) fn stats_payload(cfg: &Config, limit: usize) -> Result<Value> {
         "total_files": total_files,
         "total_bytes": total_bytes,
         "total_size": human_size(total_bytes),
+        "skipped_entries": skipped_entries,
         "by_kind": buckets_to_value(by_kind),
         "by_uploader": buckets_to_value(by_uploader),
-        "recent": recent,
+        "recent": recent.into_iter().collect::<Vec<_>>(),
     }))
+}
+
+fn accumulate_entry(
+    entry: &Value,
+    by_kind: &mut BTreeMap<String, Bucket>,
+    by_uploader: &mut BTreeMap<String, Bucket>,
+    total_files: &mut u64,
+    total_bytes: &mut u64,
+) {
+    *total_files += entry["total_files"].as_u64().unwrap_or(0);
+    *total_bytes += entry["total_bytes"].as_u64().unwrap_or(0);
+    let mut entry_kinds = BTreeSet::new();
+    let mut entry_uploaders = BTreeSet::new();
+
+    for item in entry["items"].as_array().into_iter().flatten() {
+        let mut item_kinds = BTreeSet::new();
+        let uploader = item["uploader"].as_str().filter(|s| !s.is_empty());
+        if let Some(uploader) = uploader {
+            entry_uploaders.insert(uploader.to_string());
+            by_uploader.entry(uploader.to_string()).or_default().items += 1;
+        }
+
+        for file in item["files"].as_array().into_iter().flatten() {
+            let kind = file["kind"].as_str().unwrap_or("unknown").to_string();
+            let bytes = file["bytes"].as_u64().unwrap_or(0);
+            entry_kinds.insert(kind.clone());
+            item_kinds.insert(kind.clone());
+            by_kind.entry(kind).or_default().add_file(bytes);
+            if let Some(uploader) = uploader {
+                by_uploader
+                    .entry(uploader.to_string())
+                    .or_default()
+                    .add_file(bytes);
+            }
+        }
+
+        for kind in item_kinds {
+            by_kind.entry(kind).or_default().items += 1;
+        }
+    }
+
+    for kind in entry_kinds {
+        by_kind.entry(kind).or_default().add_call();
+    }
+    for uploader in entry_uploaders {
+        by_uploader.entry(uploader).or_default().add_call();
+    }
 }
 
 pub(crate) fn render_stats_markdown(payload: &Value) -> String {
@@ -139,6 +188,11 @@ pub(crate) fn render_stats_markdown(payload: &Value) -> String {
                 bucket["size"].as_str().unwrap_or("0 B")
             ));
         }
+    }
+
+    if let Some(skipped) = payload["skipped_entries"].as_u64().filter(|n| *n > 0) {
+        lines.push(String::new());
+        lines.push(format!("Skipped {skipped} malformed history entries."));
     }
 
     if let Some(recent) = payload["recent"].as_array().filter(|a| !a.is_empty()) {
@@ -162,18 +216,6 @@ pub(crate) fn render_stats_markdown(payload: &Value) -> String {
     lines.join("\n").trim().to_string()
 }
 
-fn read_entries(path: &PathBuf) -> Result<Vec<Value>> {
-    let Ok(contents) = std::fs::read_to_string(path) else {
-        return Ok(Vec::new());
-    };
-
-    contents
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).with_context(|| "parse history JSONL entry"))
-        .collect()
-}
-
 fn timestamp_now() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
 }
@@ -181,11 +223,18 @@ fn timestamp_now() -> String {
 #[derive(Default)]
 struct Bucket {
     downloads: u64,
+    calls: u64,
+    items: u64,
     files: u64,
     bytes: u64,
 }
 
 impl Bucket {
+    fn add_call(&mut self) {
+        self.downloads += 1;
+        self.calls += 1;
+    }
+
     fn add_file(&mut self, bytes: u64) {
         self.files += 1;
         self.bytes += bytes;
@@ -201,6 +250,8 @@ fn buckets_to_value(buckets: BTreeMap<String, Bucket>) -> Value {
                     key,
                     json!({
                         "downloads": bucket.downloads,
+                        "calls": bucket.calls,
+                        "items": bucket.items,
                         "files": bucket.files,
                         "bytes": bucket.bytes,
                         "size": human_size(bucket.bytes),
