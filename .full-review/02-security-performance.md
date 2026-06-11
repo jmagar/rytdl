@@ -1,46 +1,61 @@
 # Phase 2: Security and Performance
 
+## Phase 1 Context Read
+
+Phase 1 found no new current code-quality or architecture issues and confirmed the earlier transfer-boundary and partial-result findings are remediated.
+
 ## Findings
 
-- High - `src/transfer.rs:16`
-  `ensure_remote_dir` passes `dest_path` as part of the remote SSH command: `ssh <remote> mkdir -p -- <dest_path>`. OpenSSH executes the remote command through the user's shell, so local argv boundaries are not a reliable quoting boundary for the remote command. Unlike the `scp` fallback, this path does not shell-quote `dest_path`.
-  Impact: a destination containing spaces can be split incorrectly, and a malicious or malformed destination containing shell metacharacters can alter the remote command. Because `dest_path` can come from MCP input as well as environment configuration, this is a command-boundary injection risk.
-  Fix: construct one quoted remote command string with a tested shell-quote function, for example `mkdir -p -- '<escaped dest>'`, or avoid the remote shell by using `sftp`/`scp` behavior that does not require a separate remote `mkdir`. Add tests for spaces, single quotes, semicolons, command substitutions, and leading dashes.
+No new Security or Performance findings were identified in the current checkout.
 
-- High - `src/model.rs:128` and `src/transfer.rs:17`
-  The `remote` value is accepted as an arbitrary tool input/config string and passed directly to `ssh`, `rsync`, and `scp`. There is no validation that it is an SSH alias or `user@host`, and no protection against values that begin with `-` or otherwise get interpreted as transport options by SSH-family tools.
-  Impact: a tool caller can potentially influence local SSH behavior rather than only selecting a host. Even if typical MCP clients are trusted, this server exposes transfer controls through an automation interface and should defend the boundary.
-  Fix: validate `remote` before use. Reject empty strings, whitespace, control characters, and leading `-`; consider allowing only SSH aliases and `user@host` forms with conservative characters. Apply the same validation before every transfer helper.
+## Verified Prior Remediations
 
-- Medium - `src/bootstrap/ytdlp.rs:44`, `src/bootstrap/ffmpeg.rs:26`, and `src/bootstrap/http.rs:11`
-  Runtime bootstrap downloads executable code over HTTPS and installs it into the per-user cache without an application-level checksum, signature verification, or pinned version. The Claude plugin installer verifies the app release checksum when available, but the yt-dlp and ffmpeg bootstrap path does not add comparable verification.
-  Impact: compromise or mis-release of the upstream asset path immediately becomes local code execution under the user's account. Auto-update means this can happen after the first install as well as on first run.
-  Fix: support pinned versions and expected hashes for downloaded tools, verify upstream checksums/signatures where available, and document the trust model. At minimum, expose config to disable auto-update and pin known-good binaries for locked-down deployments.
+- Resolved - `src/transfer.rs:24`
+  `RemoteSpec::parse` rejects empty remotes, option-like remotes beginning with `-`, whitespace, and control characters.
+  Impact: tool callers cannot turn the remote parameter into additional SSH-family transport options through obvious argv-boundary tricks.
 
-- Medium - `src/service.rs:71` and `src/downloader.rs:141`
-  Downloads are processed sequentially and each `yt-dlp` pass is collected with `Command::output()`, buffering stdout/stderr until the process exits. Large playlists can also print many `after_move` lines and error details.
-  Impact: this is simple and usually fine for one-off downloads, but large batches or playlists can hold memory unnecessarily and keep later URLs waiting behind slow earlier URLs.
-  Fix: stream stdout line-by-line, stream stderr into a bounded tail for errors, and consider bounded URL-level concurrency for independent URLs while keeping each URL's mode passes ordered.
+- Resolved - `src/transfer.rs:47`
+  `RemotePath::parse` rejects empty and control-character paths, and all destinations flow through `TransferTarget::parse`.
+  Impact: malformed destination paths are rejected before subprocess execution.
 
-- Medium - `src/downloader.rs:141`, `src/downloader.rs:239`, `src/transfer.rs:17`, `src/transfer.rs:56`, and `src/transfer.rs:89`
-  External commands have no explicit timeout or cancellation policy. SSH is configured to avoid interactive prompts, but network stalls, remote hangs, or stuck media extraction can still pin a tool call indefinitely.
-  Impact: one hung subprocess can tie up an MCP request and leave the caller with no bounded failure behavior. This is especially painful for stdio MCP clients because the tool call appears simply stuck.
-  Fix: wrap subprocess waits in configurable `tokio::time::timeout`, use conservative defaults for transfer phases, and document that long media downloads can override the default timeout.
+- Resolved - `src/transfer.rs:99`
+  Remote directory creation uses `remote_mkdir_command`, which shell-quotes the destination path before sending it through the remote user's shell.
+  Impact: spaces, single quotes, semicolons, command substitutions, and leading dashes are handled by the quoting layer rather than interpreted as shell syntax.
 
-- Low - `.claude-plugin/plugin.json:57`
-  The plugin's `archive_dir` description says the default is `~/.local/state/youtube_dl_mcp`, but the Rust code uses `ProjectDirs::from("tv", "tootie", "ytdl-mcp")`, which maps to a different application-specific state path.
-  Impact: users may inspect or back up the wrong archive location.
-  Fix: update the plugin description to match the actual default or expose the resolved default in setup output.
+- Resolved - `src/transfer.rs:202`
+  The rsync remote-shell command quotes each SSH option when needed.
+  Impact: configured SSH options with spaces survive rsync's `-e` command-string boundary.
+
+- Resolved - `src/downloader.rs:352`
+  yt-dlp commands use `kill_on_drop(true)`, configurable timeouts, explicit child kill on timeout, and bounded stderr tail collection.
+  Impact: stuck media extraction is bounded and large stderr output is not buffered without limit.
+
+- Resolved - `src/service.rs:122`
+  Transfer phases are wrapped in `tokio::time::timeout(cfg.transfer_timeout(), transfer)` and failed transfers keep staging for retry.
+  Impact: stuck SSH/rsync/scp phases are bounded at the service orchestration layer.
+
+- Resolved - `src/bootstrap.rs:73`, `src/bootstrap/ytdlp.rs:161`, and `src/bootstrap/ffmpeg.rs:231`
+  Optional SHA-256 pins are enforced for override, PATH, cached, and downloaded yt-dlp/ffmpeg executables.
+  Impact: locked-down users can require known executable bytes instead of trusting moving upstream assets.
+
+- Resolved - `scripts/fetch-binary.sh:303`
+  Claude plugin release downloads require published checksums by default and only allow missing checksums when `YTDL_MCP_ALLOW_MISSING_CHECKSUM=1`.
+  Impact: the plugin install path fails closed for current releases.
+
+## Residual Risks
+
+- Runtime bootstrap still allows unpinned yt-dlp and ffmpeg downloads by default. This is documented and configurable with `YTDLP_SHA256`, `FFMPEG_SHA256`, `YTDLP_PATH`, and `FFMPEG_PATH`, so it remains an accepted trust-model choice rather than a new finding.
+- Downloads are still processed sequentially by URL. This favors predictable resource use and simpler archive semantics; no performance issue was found that requires changing it.
 
 ## Verification
 
 - `cargo fmt --all --check` - passed.
-- `cargo test --all` - passed; 15 tests passed.
+- `cargo test --all` - passed; 38 tests passed.
 - `cargo clippy --all-targets -- -D warnings` - passed.
-- `cargo tree -i aws-lc-sys` - returned no matching package, confirming the documented `aws-lc-sys` cross-compile risk is not currently present.
+- `scripts/check-packaging.sh` - passed.
+- `bash -n scripts/*.sh` plus JSON syntax checks for plugin/MCP/Gemini/hooks manifests - passed.
+- `cargo tree -i aws-lc-sys` - returned exit code 101 with "package ID specification `aws-lc-sys` did not match any packages"; this confirms the documented `aws-lc-sys` cross-compile risk is not present.
 
 ## Critical Issues for Phase 3 Context
 
-- Add tests around remote path quoting and remote validation before trusting the SSH transfer boundary.
-- Add tests for partial success in `mode = both` so rendering and JSON output cannot contradict transfer behavior.
-- Add docs for downloaded executable trust, version pinning, and timeout behavior.
+- None from the current Phase 2 pass.

@@ -2,41 +2,41 @@
 
 ## Findings
 
-- High - `src/downloader.rs:198` and `src/service.rs:300`
-  The `both` download path can produce partial success that the result model cannot represent cleanly. `downloader::fetch` runs video first, appends files to the same `ItemResult`, then sets `result.error` and returns if the audio pass fails. `run_download` still transfers any produced files because `total_files > 0`, but the markdown renderer treats any item-level error as a total item failure and suppresses the file list.
-  Impact: users can see a top-level "Transferred N file(s)" message followed by an item-level failure, with no clear indication that the video succeeded and audio failed. Automation consuming JSON also has to infer partial state from the conflicting `error` plus `files` fields.
-  Fix: represent per-pass outcomes explicitly, for example `ItemResult { files, errors: Vec<PassError> }` or separate audio/video child results. Render partial success as partial success, and make transfer/reporting consume the same structured state.
+No new Code Quality or Architecture findings were identified in the current checkout.
 
-- Medium - `src/model.rs:128`, `src/model.rs:131`, `src/model.rs:134`, and `src/service.rs:22`
-  Remote transfer configuration is modeled as plain optional strings all the way from MCP input into orchestration. The service has no single validation or normalization boundary for `remote`, `dest_path`, and `video_dest_path` before invoking external transfer code.
-  Impact: architecture leaves command-safety, path policy, and user-facing validation scattered across subprocess call sites. This is already visible in Phase 2 as command-boundary risk.
-  Fix: introduce a small validated transfer config type, for example `TransferTarget { remote: RemoteSpec, audio_dest: RemotePath, video_dest: RemotePath }`, constructed once in `run_download` before downloads start.
+## Verified Prior Remediations
 
-- Medium - `src/config.rs:46` and `src/transfer.rs:55`
-  `YTDLP_SSH_OPTS` is parsed with `split_whitespace()` and later converted back into a single `ssh` command string for rsync. This makes option parsing lossy and ties config semantics to a local shell-style string even though the rest of the code generally uses argv-safe `Command` APIs.
-  Impact: quoted options or values containing spaces cannot be represented reliably. It also makes the transfer module harder to reason about because the same logical option list is handled as argv in `ssh`/`scp` and as a command string in `rsync`.
-  Fix: avoid free-form extra SSH option strings if possible. Prefer structured config fields for common needs such as port, identity file, known-hosts behavior, and proxy jump. If arbitrary options stay, parse with shell-word semantics and build the rsync remote-shell command through a tested quoting helper.
+- Resolved - `src/service.rs:22`
+  Transfer configuration now has a single validation boundary before tool bootstrapping or downloads. `run_download` resolves the requested/configured remote and destinations, then constructs `TransferTarget` once through `crate::transfer::TransferTarget::parse`.
+  Impact: transfer orchestration no longer passes raw MCP/config strings through the download and transfer phases.
 
-- Low - `src/service.rs:22`
-  `run_download` handles configuration resolution, tool bootstrapping, staging setup, download sequencing, transfer sequencing, cleanup decisions, payload construction, and markdown rendering coordination in one path.
-  Impact: the function is still under the repo's size limit, but it has accumulated several independent responsibilities. This increases the chance that future changes to reporting, transfer, or staging will affect each other.
-  Fix: split into small helpers for `resolve_download_plan`, `download_all`, `transfer_outputs`, and `cleanup_staging`, while preserving the existing module boundaries.
+- Resolved - `src/transfer.rs:21`
+  Transfer primitives are modeled as `RemoteSpec`, `RemotePath`, and `TransferTarget`.
+  Impact: SSH remote and destination policy is centralized instead of scattered across subprocess call sites.
+
+- Resolved - `src/service.rs:230`
+  The result payload now distinguishes `ok`, `failed`, `skipped`, and `partial` item states and includes `partial_items` plus `failed_items`.
+  Impact: the prior `mode = both` partial-success ambiguity is represented in structured output instead of requiring consumers to infer from conflicting fields.
+
+- Resolved - `src/service.rs:331`
+  Markdown rendering now shows files for partial items and only renders an item as failed when it has an error and no files.
+  Impact: users can see successful files even when one pass of a `both` download failed.
 
 ## Positive Notes
 
-- Module boundaries are clear and match the documented architecture.
-- Files stay under the 500-line convention.
-- Tests are in sibling `foo_tests.rs` files as required.
-- Logging is routed to stderr in `src/main.rs`, preserving stdout for MCP JSON-RPC.
-- `AGENTS.md` and `GEMINI.md` are symlinks to `CLAUDE.md`.
+- The documented module layout still matches the implementation.
+- No reviewed Rust source file exceeds the 500-line repo convention; largest files are `src/service.rs` at 458 lines and `src/downloader.rs` at 420 lines.
+- Tests remain in sibling `foo_tests.rs` files.
+- `AGENTS.md` and `GEMINI.md` are symlinks to `CLAUDE.md`, preserving the source-of-truth rule.
+- `src/main.rs` keeps tracing on stderr, preserving stdout for MCP JSON-RPC.
 
 ## Verification
 
 - `cargo fmt --all --check` - passed.
-- `cargo test --all` - passed; 15 tests passed.
+- `cargo test --all` - passed; 38 tests passed.
 - `cargo clippy --all-targets -- -D warnings` - passed.
+- `wc -l src/*.rs src/bootstrap/*.rs scripts/*.sh .github/workflows/*.yml README.md CLAUDE.md` - passed; reviewed file sizes against the repo policy.
 
 ## Critical Issues for Phase 2 Context
 
-- The transfer target strings have no validation boundary before crossing SSH, rsync, and scp subprocess boundaries.
-- Partial success in `mode = both` creates conflicting result state, which can hide what was actually downloaded and transferred.
+- None from the current Phase 1 pass.
