@@ -115,11 +115,7 @@
     </section>
   </main>
   <script>
-    const resultsEl = document.querySelector("#results");
-    const form = document.querySelector("#search-form");
-    const queryEl = document.querySelector("#query");
-    const app = window.mcpApp || window.openai;
-    const demoResults = [
+    window.__YTDL_SEARCH_DEMO_RESULTS__ = [
       {
         title: "Slow Pulp - Falling Apart Live",
         url: "https://www.youtube.com/watch?v=abc123",
@@ -135,14 +131,12 @@
         thumbnail: "https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg"
       }
     ];
-
-    function formatDuration(seconds) {
+    function ytdlFormatDuration(seconds) {
       if (!seconds) return "unknown duration";
       const total = Math.round(seconds);
       return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
     }
-
-    function escapeHtml(value) {
+    function ytdlEscapeHtml(value) {
       return String(value || "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
         "<": "&lt;",
@@ -150,6 +144,50 @@
         '"': "&quot;",
         "'": "&#39;"
       })[char]);
+    }
+    function ytdlRenderResults(results) {
+      const resultsEl = document.querySelector("#results");
+      if (!resultsEl) return;
+      if (!results || results.length === 0) {
+        resultsEl.innerHTML = '<div class="empty">No results.</div>';
+        return;
+      }
+      resultsEl.innerHTML = results.map((item, index) => `
+        <article class="result" aria-selected="${index === 0}">
+          <img class="thumb" src="${ytdlEscapeHtml(item.thumbnail || "")}" alt="" />
+          <div>
+            <h2 class="title">${ytdlEscapeHtml(item.title || "Untitled")}</h2>
+            <div class="meta">${ytdlEscapeHtml(item.uploader || "Unknown channel")} - ${ytdlFormatDuration(item.duration)}</div>
+            <div class="meta">${ytdlEscapeHtml(item.url)}</div>
+          </div>
+          <div class="actions">
+            <button type="button" data-action="probe" data-url="${ytdlEscapeHtml(item.url)}">Probe</button>
+            <button type="button" class="download" data-action="audio" data-url="${ytdlEscapeHtml(item.url)}">Audio</button>
+            <button type="button" class="download" data-action="video" data-url="${ytdlEscapeHtml(item.url)}">Video</button>
+          </div>
+        </article>
+      `).join("");
+    }
+    if (new URLSearchParams(window.location.search).has("demo")) {
+      document.querySelector("#query").value = "slow pulp live";
+      ytdlRenderResults(window.__YTDL_SEARCH_DEMO_RESULTS__);
+    }
+  </script>
+  <script type="module">
+    import { App } from "https://esm.sh/@modelcontextprotocol/ext-apps@1.7.4?bundle";
+
+    const resultsEl = document.querySelector("#results");
+    const form = document.querySelector("#search-form");
+    const queryEl = document.querySelector("#query");
+    const app = new App({ name: "YouTube search", version: "1.0.0" });
+    const demoResults = window.__YTDL_SEARCH_DEMO_RESULTS__;
+
+    function formatDuration(seconds) {
+      return ytdlFormatDuration(seconds);
+    }
+
+    function escapeHtml(value) {
+      return ytdlEscapeHtml(value);
     }
 
     function render(results) {
@@ -174,32 +212,82 @@
       `).join("");
     }
 
+    function parseResult(result) {
+      if (result?.structuredContent?.results) {
+        return result.structuredContent;
+      }
+      const text = result?.content?.find((item) => item.type === "text")?.text;
+      if (!text) return { results: [] };
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { results: [] };
+      }
+    }
+
+    app.ontoolinput = (params) => {
+      if (params?.query) queryEl.value = params.query;
+    };
+
+    app.ontoolresult = (result) => {
+      const payload = parseResult(result);
+      if (payload.query) queryEl.value = payload.query;
+      render(payload.results || []);
+    };
+
+    app.onerror = () => {
+      if (!new URLSearchParams(window.location.search).has("demo")) {
+        resultsEl.innerHTML = '<div class="empty">Could not connect to the MCP host.</div>';
+      }
+    };
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const query = queryEl.value.trim();
       if (!query) return;
       resultsEl.innerHTML = '<div class="empty">Searching...</div>';
-      if (app && app.callTool) {
-        const response = await app.callTool("youtube_search", { query, limit: 10, response_format: "json" });
-        const payload = response.structuredContent || JSON.parse(response.content?.[0]?.text || "{}");
+      try {
+        const response = await app.callServerTool({
+          name: "youtube_search",
+          arguments: { query, limit: 10, response_format: "json" }
+        });
+        const payload = parseResult(response);
         render(payload.results || []);
+      } catch {
+        resultsEl.innerHTML = '<div class="empty">Search failed.</div>';
       }
     });
 
     resultsEl.addEventListener("click", async (event) => {
       const button = event.target.closest("button[data-action]");
-      if (!button || !app || !app.callTool) return;
+      if (!button) return;
       const url = button.dataset.url;
       const action = button.dataset.action;
-      if (action === "probe") await app.callTool("youtube_probe", { urls: url });
-      if (action === "audio") await app.callTool("youtube_download", { urls: url, mode: "audio" });
-      if (action === "video") await app.callTool("youtube_download", { urls: url, mode: "video" });
+      try {
+        if (action === "probe") {
+          await app.callServerTool({ name: "youtube_probe", arguments: { urls: url } });
+        }
+        if (action === "audio") {
+          await app.callServerTool({ name: "youtube_download", arguments: { urls: url, mode: "audio" } });
+        }
+        if (action === "video") {
+          await app.callServerTool({ name: "youtube_download", arguments: { urls: url, mode: "video" } });
+        }
+      } catch {
+        resultsEl.insertAdjacentHTML("afterbegin", '<div class="empty">Action failed.</div>');
+      }
     });
 
     if (new URLSearchParams(window.location.search).has("demo")) {
       queryEl.value = "slow pulp live";
       render(demoResults);
     }
+
+    app.connect().catch(() => {
+      if (!new URLSearchParams(window.location.search).has("demo")) {
+        resultsEl.innerHTML = '<div class="empty">Could not connect to the MCP host.</div>';
+      }
+    });
   </script>
 </body>
 </html>
