@@ -19,6 +19,9 @@ fn blank() -> Config {
         ssh_opts: vec![],
         archive_dir: None,
         history_path: None,
+        plex_url: None,
+        plex_token: None,
+        plex_playlist: None,
         auto_update: true,
         max_age_days: 14,
         update_pre: false,
@@ -141,6 +144,9 @@ fn from_env_result_wires_runtime_env_values() {
     std::env::set_var("YTDLP_AUDIO_FORMAT", "opus");
     std::env::set_var("YTDLP_SSH_OPTS", "-i '/home/me/media key' -p 2222");
     std::env::set_var("YTDLP_HISTORY_PATH", "/tmp/ytdl-history.jsonl");
+    std::env::set_var("YTDLP_PLEX_URL", "http://plex.local:32400");
+    std::env::set_var("YTDLP_PLEX_TOKEN", "plex-token");
+    std::env::set_var("YTDLP_PLEX_PLAYLIST", "Downloads");
     std::env::set_var(
         "YTDLP_SHA256",
         "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
@@ -156,6 +162,9 @@ fn from_env_result_wires_runtime_env_values() {
     assert_eq!(cfg.audio_format, "opus");
     assert_eq!(cfg.ssh_opts, vec!["-i", "/home/me/media key", "-p", "2222"]);
     assert_eq!(cfg.history_path.as_deref(), Some("/tmp/ytdl-history.jsonl"));
+    assert_eq!(cfg.plex_url.as_deref(), Some("http://plex.local:32400"));
+    assert_eq!(cfg.plex_token.as_deref(), Some("plex-token"));
+    assert_eq!(cfg.plex_playlist.as_deref(), Some("Downloads"));
     assert_eq!(
         cfg.ytdlp_sha256.as_deref(),
         Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
@@ -174,6 +183,9 @@ fn clear_test_env() {
         "YTDLP_AUDIO_FORMAT",
         "YTDLP_SSH_OPTS",
         "YTDLP_HISTORY_PATH",
+        "YTDLP_PLEX_URL",
+        "YTDLP_PLEX_TOKEN",
+        "YTDLP_PLEX_PLAYLIST",
         "YTDLP_SHA256",
         "FFMPEG_SHA256",
         "YTDLP_TIMEOUT_SECS",

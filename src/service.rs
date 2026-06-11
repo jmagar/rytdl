@@ -105,6 +105,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         }
         // Archive hit / genuinely empty — succeed with a no-op summary.
         let mut payload = download_payload(&results, &remote, &[], true, None, None);
+        record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
         record_history(cfg, input.mode, &mut payload);
         return Ok(render(
             &payload,
@@ -171,6 +172,9 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         transfer_error.clone(),
         staging_kept.as_deref(),
     );
+    if transferred {
+        record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
+    }
     record_history(cfg, input.mode, &mut payload);
     Ok(render(
         &payload,
@@ -261,6 +265,39 @@ fn record_history(cfg: &Config, mode: crate::model::DownloadMode, payload: &mut 
     if let Err(error) = crate::history::append_download(cfg, mode, payload) {
         tracing::warn!(%error, "failed to append download history");
         payload["history_error"] = serde_json::Value::String(error.to_string());
+    }
+}
+
+async fn record_plex_playlist(
+    cfg: &Config,
+    requested_playlist: Option<String>,
+    results: &[ItemResult],
+    payload: &mut serde_json::Value,
+) {
+    let Some(playlist) = requested_playlist
+        .or_else(|| cfg.plex_playlist.clone())
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return;
+    };
+    let cfg = cfg.clone();
+    let results = results.to_vec();
+    match tokio::task::spawn_blocking(move || {
+        crate::plex::add_downloaded_audio(&cfg, &playlist, &results)
+    })
+    .await
+    {
+        Ok(Ok(update)) => {
+            payload["plex_playlist"] = serde_json::to_value(update).unwrap_or_default();
+        }
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "failed to update Plex playlist");
+            payload["plex_playlist_error"] = serde_json::Value::String(error.to_string());
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Plex playlist task failed");
+            payload["plex_playlist_error"] = serde_json::Value::String(error.to_string());
+        }
     }
 }
 

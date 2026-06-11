@@ -58,7 +58,15 @@ needs neither pre-installed — the one binary is the whole install.
 | `video_dest_path` | env `YTDLP_VIDEO_REMOTE_PATH` → `dest_path` | Absolute remote dir for video. |
 | `keep_local` | `false` | Keep the local staging copy after transfer. |
 | `use_archive` | `false` | Record + skip already-downloaded IDs (per mode). |
+| `plex_playlist` | env `YTDLP_PLEX_PLAYLIST` | Plex playlist title or ID to add downloaded audio tracks to. Requires `YTDLP_PLEX_URL` and `YTDLP_PLEX_TOKEN`. |
 | `response_format` | `markdown` | `markdown` or `json`. |
+
+When a Plex playlist is configured, successful downloads that produced audio
+files search Plex for each downloaded track, create the playlist if needed, and
+add missing tracks while skipping entries already present. Plex errors are
+reported as `plex_playlist_error` and do not make the completed download fail.
+JSON responses include a `plex_playlist` summary with `matched`, `added`,
+`already_present`, and `missing` counts.
 
 `youtube_probe` takes `urls` and `response_format`.
 
@@ -138,6 +146,9 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 | `YTDLP_SSH_OPTS` | — | Extra ssh options parsed with shell-word syntax; appended after the forced `BatchMode`/`StrictHostKeyChecking` flags. Example: `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is rejected. |
 | `YTDLP_ARCHIVE_DIR` | per-user state dir | Where `use_archive` history lives. |
 | `YTDLP_HISTORY_PATH` | per-user state dir `downloads.jsonl` | JSONL download ledger used by `youtube_stats`. |
+| `YTDLP_PLEX_URL` | — | Plex server URL, e.g. `http://plex.local:32400`, used when adding audio downloads to a Plex playlist. |
+| `YTDLP_PLEX_TOKEN` | — | Plex auth token for playlist/search API calls. |
+| `YTDLP_PLEX_PLAYLIST` | — | Default Plex playlist title or ID for `youtube_download`; can be overridden with the `plex_playlist` parameter. |
 | `YTDLP_AUTO_UPDATE` | `1` | Re-download yt-dlp when stale. |
 | `YTDLP_MAX_AGE_DAYS` | `14` | Staleness threshold (days). |
 | `YTDLP_UPDATE_PRE` | `0` | Track yt-dlp's nightly channel. |

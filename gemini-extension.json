@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "mcpServers": {
     "ytdl-mcp": {
@@ -38,6 +38,21 @@
       "name": "Download ledger path",
       "description": "JSONL file where completed download calls are logged for youtube_stats. Optional.",
       "envVar": "YTDLP_HISTORY_PATH"
+    },
+    {
+      "name": "Plex server URL",
+      "description": "Optional Plex server base URL, e.g. http://plex.local:32400, used to add downloaded audio tracks to a Plex playlist.",
+      "envVar": "YTDLP_PLEX_URL"
+    },
+    {
+      "name": "Plex token",
+      "description": "Optional Plex auth token for playlist/search API calls.",
+      "envVar": "YTDLP_PLEX_TOKEN"
+    },
+    {
+      "name": "Plex playlist",
+      "description": "Optional default Plex playlist title or ID. Can be overridden per youtube_download call.",
+      "envVar": "YTDLP_PLEX_PLAYLIST"
     },
     {
       "name": "yt-dlp extractor args",

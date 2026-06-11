@@ -150,6 +150,9 @@ pub struct DownloadInput {
     /// Record downloaded IDs and skip them on future calls (per mode).
     #[serde(default)]
     pub use_archive: bool,
+    /// Plex playlist title or ID to add downloaded audio tracks to. Falls back to YTDLP_PLEX_PLAYLIST.
+    #[serde(default)]
+    pub plex_playlist: Option<String>,
     /// 'markdown' (human-readable) or 'json' (machine-readable).
     #[serde(default)]
     pub response_format: ResponseFormat,

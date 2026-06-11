@@ -25,6 +25,10 @@ pub struct MediaFile {
     pub path: PathBuf,
     pub kind: &'static str, // "audio" | "video"
     pub size: u64,
+    pub title: Option<String>,
+    pub video_id: Option<String>,
+    pub uploader: Option<String>,
+    pub duration: Option<f64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -191,6 +195,14 @@ async fn run_pass(
                 path,
                 kind,
                 size: md.len(),
+                title: Some(title.to_string()),
+                video_id: Some(id.to_string()),
+                uploader: if uploader == "NA" {
+                    None
+                } else {
+                    Some(uploader.to_string())
+                },
+                duration: duration.parse().ok(),
             });
             count += 1;
         }

@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
   "author": {
     "name": "Jacob Magar"
@@ -61,6 +61,25 @@
       "type": "string",
       "title": "Download ledger path",
       "description": "JSONL file where completed download calls are logged for youtube_stats. Defaults to downloads.jsonl in the per-user state dir.",
+      "required": false
+    },
+    "plex_url": {
+      "type": "string",
+      "title": "Plex server URL",
+      "description": "Optional Plex server base URL, e.g. http://plex.local:32400, used to add downloaded audio tracks to a Plex playlist.",
+      "required": false
+    },
+    "plex_token": {
+      "type": "string",
+      "title": "Plex token",
+      "description": "Optional Plex auth token for playlist/search API calls.",
+      "required": false,
+      "sensitive": true
+    },
+    "plex_playlist": {
+      "type": "string",
+      "title": "Plex playlist",
+      "description": "Optional default Plex playlist title or ID to add downloaded audio tracks to. Can be overridden per youtube_download call.",
       "required": false
     },
     "auto_update": {

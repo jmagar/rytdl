@@ -43,6 +43,10 @@ pub(crate) fn download_payload(
                     "name": f.path.file_name().map(|n| n.to_string_lossy().to_string()),
                     "kind": f.kind,
                     "bytes": f.size,
+                    "title": f.title,
+                    "video_id": f.video_id,
+                    "uploader": f.uploader,
+                    "duration": f.duration,
                 })).collect::<Vec<_>>(),
             })
         })
@@ -172,6 +176,29 @@ pub(crate) fn render_download_markdown(p: &serde_json::Value) -> String {
                 human_size(f["bytes"].as_u64().unwrap_or(0))
             ));
         }
+    }
+    if let Some(plex) = p["plex_playlist"].as_object() {
+        let playlist = plex
+            .get("playlist")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Plex playlist");
+        lines.push(String::new());
+        lines.push(format!(
+            "Plex `{playlist}`: matched {}, added {}, already present {}, missing {}.",
+            plex.get("matched").and_then(|v| v.as_u64()).unwrap_or(0),
+            plex.get("added").and_then(|v| v.as_u64()).unwrap_or(0),
+            plex.get("already_present")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0),
+            plex.get("missing")
+                .and_then(|v| v.as_array())
+                .map(Vec::len)
+                .unwrap_or(0)
+        ));
+    }
+    if let Some(error) = p["plex_playlist_error"].as_str() {
+        lines.push(String::new());
+        lines.push(format!("Plex playlist update failed: {error}"));
     }
     lines.join("\n").trim().to_string()
 }

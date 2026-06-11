@@ -14,6 +14,10 @@ fn media_file(kind: &'static str, name: &str) -> MediaFile {
         path: PathBuf::from(name),
         kind,
         size: 2048,
+        title: Some(name.to_string()),
+        video_id: None,
+        uploader: None,
+        duration: None,
     }
 }
 
@@ -27,6 +31,9 @@ fn test_config() -> Config {
         ssh_opts: vec![],
         archive_dir: None,
         history_path: None,
+        plex_url: None,
+        plex_token: None,
+        plex_playlist: None,
         auto_update: false,
         max_age_days: 14,
         update_pre: false,
@@ -53,6 +60,7 @@ fn download_input(urls: Urls) -> DownloadInput {
         video_dest_path: None,
         keep_local: false,
         use_archive: false,
+        plex_playlist: None,
         response_format: ResponseFormat::Markdown,
     }
 }

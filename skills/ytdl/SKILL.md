@@ -62,6 +62,12 @@ Grab both audio and video (audio → music dest, video → movies dest):
 youtube_download(urls="https://...", mode="both")
 ```
 
+Add downloaded audio tracks to a Plex playlist:
+
+```
+youtube_download(urls="https://...", plex_playlist="Fresh Downloads")
+```
+
 Re-pull a playlist and only fetch what's new:
 
 ```
@@ -95,6 +101,10 @@ the ledger append fails, with `history_error` included in JSON output.
   on success it is removed unless `keep_local=true`.
 - Completed download calls are appended to a JSONL ledger, defaulting to the
   per-user state dir. Set `YTDLP_HISTORY_PATH` to put it somewhere specific.
+- Set `YTDLP_PLEX_URL`, `YTDLP_PLEX_TOKEN`, and optionally
+  `YTDLP_PLEX_PLAYLIST` to add downloaded audio tracks to a Plex playlist.
+  Per-call `plex_playlist` overrides the default. Plex playlist failures are
+  reported without failing a completed download.
 - yt-dlp auto-updates at server startup when stale (configurable), so a fresh session
   self-heals against extractor breakage.
 - yt-dlp and ffmpeg are resolved automatically: explicit env path, then `PATH`,
@@ -117,6 +127,8 @@ the ledger append fails, with `history_error` included in JSON output.
 - `YTDLP_SSH_OPTS` adds extra SSH options using shell-word syntax, for example
   `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is
   rejected.
+- `YTDLP_PLEX_URL`, `YTDLP_PLEX_TOKEN`, and `YTDLP_PLEX_PLAYLIST` control
+  optional Plex playlist updates after successful audio transfers.
 
 ## Requirements (on the host running this plugin)
 

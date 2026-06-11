@@ -10,6 +10,7 @@ mod downloader;
 mod history;
 mod mcp;
 mod model;
+mod plex;
 mod search_app;
 mod service;
 mod setup;
