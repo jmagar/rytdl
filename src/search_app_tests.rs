@@ -22,10 +22,13 @@ fn app_resource_contains_html_and_aurora_hooks() {
     assert!(text.contains("YouTube search"));
     assert!(text.contains("--aurora-page-bg"));
     assert!(text.contains("callServerTool"));
+    assert!(text.contains("window.McpExtApps"));
+    assert!(!text.contains("{{MCP_EXT_APPS_BUNDLE}}"));
+    assert!(!text.contains("https://esm.sh"));
     let ui = meta.as_ref().unwrap().0.get("ui").unwrap();
     assert_eq!(
         ui["csp"]["resourceDomains"][0],
-        serde_json::json!("https://esm.sh")
+        serde_json::json!("https://i.ytimg.com")
     );
 }
 

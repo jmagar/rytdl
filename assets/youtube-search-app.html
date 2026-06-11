@@ -60,7 +60,8 @@
       font: 560 13px/1 Inter, ui-sans-serif, system-ui, sans-serif;
       outline: none;
     }
-    input:focus { border-color: var(--aurora-border-strong); box-shadow: var(--aurora-active-glow); }
+    input:focus,
+    button:focus-visible { border-color: var(--aurora-border-strong); box-shadow: var(--aurora-active-glow); }
     button {
       height: 40px;
       border-radius: var(--aurora-radius-1);
@@ -89,6 +90,9 @@
       background: var(--aurora-control-surface);
     }
     .title { margin: 0 0 5px; font: 760 14px/1.2 Manrope, Inter, sans-serif; }
+    .copy { min-width: 0; }
+    .title,
+    .meta { overflow-wrap: anywhere; }
     .meta { color: var(--aurora-text-muted); font-size: 12px; }
     .actions { display: flex; align-items: center; gap: 8px; }
     .actions button { height: 32px; padding: 0 10px; }
@@ -115,7 +119,15 @@
     </section>
   </main>
   <script>
-    window.__YTDL_SEARCH_DEMO_RESULTS__ = [
+    {{MCP_EXT_APPS_BUNDLE}}
+  </script>
+  <script>
+    const { App } = window.McpExtApps;
+    const resultsEl = document.querySelector("#results");
+    const form = document.querySelector("#search-form");
+    const queryEl = document.querySelector("#query");
+    const app = new App({ name: "YouTube search", version: "1.0.0" });
+    const demoResults = [
       {
         title: "Slow Pulp - Falling Apart Live",
         url: "https://www.youtube.com/watch?v=abc123",
@@ -131,12 +143,14 @@
         thumbnail: "https://i.ytimg.com/vi/jNQXAC9IVRw/hqdefault.jpg"
       }
     ];
-    function ytdlFormatDuration(seconds) {
+
+    function formatDuration(seconds) {
       if (!seconds) return "unknown duration";
       const total = Math.round(seconds);
       return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
     }
-    function ytdlEscapeHtml(value) {
+
+    function escapeHtml(value) {
       return String(value || "").replace(/[&<>"']/g, (char) => ({
         "&": "&amp;",
         "<": "&lt;",
@@ -144,50 +158,6 @@
         '"': "&quot;",
         "'": "&#39;"
       })[char]);
-    }
-    function ytdlRenderResults(results) {
-      const resultsEl = document.querySelector("#results");
-      if (!resultsEl) return;
-      if (!results || results.length === 0) {
-        resultsEl.innerHTML = '<div class="empty">No results.</div>';
-        return;
-      }
-      resultsEl.innerHTML = results.map((item, index) => `
-        <article class="result" aria-selected="${index === 0}">
-          <img class="thumb" src="${ytdlEscapeHtml(item.thumbnail || "")}" alt="" />
-          <div>
-            <h2 class="title">${ytdlEscapeHtml(item.title || "Untitled")}</h2>
-            <div class="meta">${ytdlEscapeHtml(item.uploader || "Unknown channel")} - ${ytdlFormatDuration(item.duration)}</div>
-            <div class="meta">${ytdlEscapeHtml(item.url)}</div>
-          </div>
-          <div class="actions">
-            <button type="button" data-action="probe" data-url="${ytdlEscapeHtml(item.url)}">Probe</button>
-            <button type="button" class="download" data-action="audio" data-url="${ytdlEscapeHtml(item.url)}">Audio</button>
-            <button type="button" class="download" data-action="video" data-url="${ytdlEscapeHtml(item.url)}">Video</button>
-          </div>
-        </article>
-      `).join("");
-    }
-    if (new URLSearchParams(window.location.search).has("demo")) {
-      document.querySelector("#query").value = "slow pulp live";
-      ytdlRenderResults(window.__YTDL_SEARCH_DEMO_RESULTS__);
-    }
-  </script>
-  <script type="module">
-    import { App } from "https://esm.sh/@modelcontextprotocol/ext-apps@1.7.4?bundle";
-
-    const resultsEl = document.querySelector("#results");
-    const form = document.querySelector("#search-form");
-    const queryEl = document.querySelector("#query");
-    const app = new App({ name: "YouTube search", version: "1.0.0" });
-    const demoResults = window.__YTDL_SEARCH_DEMO_RESULTS__;
-
-    function formatDuration(seconds) {
-      return ytdlFormatDuration(seconds);
-    }
-
-    function escapeHtml(value) {
-      return ytdlEscapeHtml(value);
     }
 
     function render(results) {
@@ -198,7 +168,7 @@
       resultsEl.innerHTML = results.map((item, index) => `
         <article class="result" aria-selected="${index === 0}">
           <img class="thumb" src="${escapeHtml(item.thumbnail || "")}" alt="" />
-          <div>
+          <div class="copy">
             <h2 class="title">${escapeHtml(item.title || "Untitled")}</h2>
             <div class="meta">${escapeHtml(item.uploader || "Unknown channel")} - ${formatDuration(item.duration)}</div>
             <div class="meta">${escapeHtml(item.url)}</div>

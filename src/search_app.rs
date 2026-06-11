@@ -5,7 +5,9 @@ use serde_json::json;
 
 pub const RESOURCE_URI: &str = "ui://ytdl-mcp/youtube-search.html";
 pub const RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
-const HTML: &str = include_str!("../assets/youtube-search-app.html");
+const HTML_TEMPLATE: &str = include_str!("../assets/youtube-search-app.html");
+const APP_BRIDGE: &str = include_str!("../assets/ext-apps-vendored.js");
+const APP_BRIDGE_PLACEHOLDER: &str = "{{MCP_EXT_APPS_BUNDLE}}";
 
 pub fn list_app_resources() -> ListResourcesResult {
     ListResourcesResult {
@@ -30,7 +32,6 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
             "csp": {
                 "connectDomains": [],
                 "resourceDomains": [
-                    "https://esm.sh",
                     "https://i.ytimg.com",
                     "https://img.youtube.com"
                 ]
@@ -38,7 +39,7 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
         }),
     );
     Some(ReadResourceResult::new(vec![ResourceContents::text(
-        HTML,
+        html(),
         RESOURCE_URI,
     )
     .with_mime_type(RESOURCE_MIME_TYPE)
@@ -50,6 +51,10 @@ pub fn tool_meta() -> Meta {
     meta.0
         .insert("ui".into(), json!({ "resourceUri": RESOURCE_URI }));
     meta
+}
+
+fn html() -> String {
+    HTML_TEMPLATE.replace(APP_BRIDGE_PLACEHOLDER, APP_BRIDGE)
 }
 
 #[cfg(test)]

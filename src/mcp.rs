@@ -93,9 +93,10 @@ impl YtdlServer {
     /// Open the interactive YouTube search MCP App. UI-capable hosts render the
     /// embedded Aurora search panel; other hosts receive text fallback results.
     #[tool(
-        name = "youtube_search_ui",
-        description = "Open an interactive YouTube search UI for selecting videos to probe or download."
-    )]
+    name = "youtube_search_ui",
+    description = "Open an interactive YouTube search UI for selecting videos to probe or download.",
+    meta = search_app::tool_meta()
+)]
     async fn youtube_search_ui(
         &self,
         Parameters(input): Parameters<SearchInput>,
