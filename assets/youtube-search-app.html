@@ -7,11 +7,9 @@
   <style>
     :root {
       --aurora-page-bg: #07131c;
-      --aurora-nav-bg: #091923;
       --aurora-panel-medium: #102532;
       --aurora-panel-strong: #132d3d;
       --aurora-control-surface: #0d202c;
-      --aurora-hover-bg: color-mix(in srgb, #29b6f6 10%, transparent);
       --aurora-border-default: #1d3d4e;
       --aurora-border-strong: #2a5870;
       --aurora-text-primary: #e6f4fb;
@@ -20,7 +18,6 @@
       --aurora-accent-pink: #f9a8c4;
       --aurora-active-glow: 0 0 0 1px color-mix(in srgb, var(--aurora-accent-primary) 78%, transparent), 0 0 26px color-mix(in srgb, var(--aurora-accent-primary) 22%, transparent);
       --aurora-radius-1: 8px;
-      --aurora-radius-2: 8px;
       --aurora-radius-3: 8px;
       --aurora-shadow-strong: 0 24px 70px rgba(0, 0, 0, 0.38);
       color-scheme: dark;
@@ -127,6 +124,7 @@
     const form = document.querySelector("#search-form");
     const queryEl = document.querySelector("#query");
     const app = new App({ name: "YouTube search", version: "1.0.0" });
+    const isDemo = new URLSearchParams(window.location.search).has("demo");
     const demoResults = [
       {
         title: "Slow Pulp - Falling Apart Live",
@@ -160,9 +158,13 @@
       })[char]);
     }
 
+    function showStatus(message) {
+      resultsEl.innerHTML = `<div class="empty">${escapeHtml(message)}</div>`;
+    }
+
     function render(results) {
       if (!results || results.length === 0) {
-        resultsEl.innerHTML = '<div class="empty">No results.</div>';
+        showStatus("No results.");
         return;
       }
       resultsEl.innerHTML = results.map((item, index) => `
@@ -195,36 +197,50 @@
       }
     }
 
+    function renderPayload(result) {
+      const payload = parseResult(result);
+      if (payload.query) queryEl.value = payload.query;
+      render(payload.results || []);
+    }
+
+    function actionToolCall(action, url) {
+      const calls = {
+        probe: { name: "youtube_probe", arguments: { urls: url } },
+        audio: { name: "youtube_download", arguments: { urls: url, mode: "audio" } },
+        video: { name: "youtube_download", arguments: { urls: url, mode: "video" } }
+      };
+      return calls[action];
+    }
+
+    function showConnectionError() {
+      if (!isDemo) {
+        showStatus("Could not connect to the MCP host.");
+      }
+    }
+
     app.ontoolinput = (params) => {
       if (params?.query) queryEl.value = params.query;
     };
 
     app.ontoolresult = (result) => {
-      const payload = parseResult(result);
-      if (payload.query) queryEl.value = payload.query;
-      render(payload.results || []);
+      renderPayload(result);
     };
 
-    app.onerror = () => {
-      if (!new URLSearchParams(window.location.search).has("demo")) {
-        resultsEl.innerHTML = '<div class="empty">Could not connect to the MCP host.</div>';
-      }
-    };
+    app.onerror = showConnectionError;
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const query = queryEl.value.trim();
       if (!query) return;
-      resultsEl.innerHTML = '<div class="empty">Searching...</div>';
+      showStatus("Searching...");
       try {
         const response = await app.callServerTool({
           name: "youtube_search",
           arguments: { query, limit: 10, response_format: "json" }
         });
-        const payload = parseResult(response);
-        render(payload.results || []);
+        renderPayload(response);
       } catch {
-        resultsEl.innerHTML = '<div class="empty">Search failed.</div>';
+        showStatus("Search failed.");
       }
     });
 
@@ -233,31 +249,21 @@
       if (!button) return;
       const url = button.dataset.url;
       const action = button.dataset.action;
+      const toolCall = actionToolCall(action, url);
+      if (!toolCall) return;
       try {
-        if (action === "probe") {
-          await app.callServerTool({ name: "youtube_probe", arguments: { urls: url } });
-        }
-        if (action === "audio") {
-          await app.callServerTool({ name: "youtube_download", arguments: { urls: url, mode: "audio" } });
-        }
-        if (action === "video") {
-          await app.callServerTool({ name: "youtube_download", arguments: { urls: url, mode: "video" } });
-        }
+        await app.callServerTool(toolCall);
       } catch {
         resultsEl.insertAdjacentHTML("afterbegin", '<div class="empty">Action failed.</div>');
       }
     });
 
-    if (new URLSearchParams(window.location.search).has("demo")) {
+    if (isDemo) {
       queryEl.value = "slow pulp live";
       render(demoResults);
     }
 
-    app.connect().catch(() => {
-      if (!new URLSearchParams(window.location.search).has("demo")) {
-        resultsEl.innerHTML = '<div class="empty">Could not connect to the MCP host.</div>';
-      }
-    });
+    app.connect().catch(showConnectionError);
   </script>
 </body>
 </html>

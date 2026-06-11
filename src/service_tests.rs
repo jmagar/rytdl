@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use serde_json::json;
 
@@ -178,12 +178,7 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
     std::fs::create_dir_all(&staging).unwrap();
     let fake = write_fake_runtime(&bin);
 
-    let old_path = std::env::var_os("PATH");
-    let mut path_entries = vec![bin.clone()];
-    if let Some(old_path) = &old_path {
-        path_entries.extend(std::env::split_paths(old_path));
-    }
-    std::env::set_var("PATH", std::env::join_paths(path_entries).unwrap());
+    let _path = PathOverride::prepend(bin.clone());
 
     let mut cfg = test_config();
     cfg.ytdlp_path = Some(fake.ytdlp.display().to_string());
@@ -202,12 +197,6 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
 
     let output = run_download(&cfg, input).await;
 
-    if let Some(old_path) = old_path {
-        std::env::set_var("PATH", old_path);
-    } else {
-        std::env::remove_var("PATH");
-    }
-
     let value: serde_json::Value = serde_json::from_str(&output.unwrap()).unwrap();
     assert_eq!(value["transferred"], true);
     assert_eq!(value["partial_items"], 1);
@@ -217,6 +206,34 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
     assert_eq!(value["items"][0]["status"], "partial");
     assert_eq!(value["items"][0]["error"], "audio pass failed");
     assert_eq!(value["items"][0]["files"][0]["kind"], "video");
+}
+
+struct PathOverride {
+    old_path: Option<OsString>,
+}
+
+impl PathOverride {
+    fn prepend(path: PathBuf) -> Self {
+        let old_path = std::env::var_os("PATH");
+        let mut path_entries = vec![path];
+        if let Some(old_path) = &old_path {
+            path_entries.extend(std::env::split_paths(old_path));
+        }
+
+        std::env::set_var("PATH", std::env::join_paths(path_entries).unwrap());
+
+        Self { old_path }
+    }
+}
+
+impl Drop for PathOverride {
+    fn drop(&mut self) {
+        if let Some(old_path) = self.old_path.take() {
+            std::env::set_var("PATH", old_path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+    }
 }
 
 struct FakeRuntime {

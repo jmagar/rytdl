@@ -30,20 +30,9 @@ pub(crate) fn download_payload(
     let items: Vec<serde_json::Value> = results
         .iter()
         .map(|r| {
-            let status = if r.error.is_some() {
-                if r.files.is_empty() {
-                    "failed"
-                } else {
-                    "partial"
-                }
-            } else if r.files.is_empty() {
-                "skipped"
-            } else {
-                "ok"
-            };
             json!({
                 "url": r.url,
-                "status": status,
+                "status": item_status(r),
                 "title": r.title,
                 "video_id": r.video_id,
                 "duration": r.duration,
@@ -97,6 +86,15 @@ pub(crate) fn download_payload(
         "failed_items": failed_items,
         "items": items,
     })
+}
+
+fn item_status(result: &ItemResult) -> &'static str {
+    match (result.error.is_some(), result.files.is_empty()) {
+        (true, true) => "failed",
+        (true, false) => "partial",
+        (false, true) => "skipped",
+        (false, false) => "ok",
+    }
 }
 
 pub(crate) fn probe_payload(results: &[ProbeResult]) -> serde_json::Value {

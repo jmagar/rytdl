@@ -13,7 +13,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::bootstrap::Tools;
-use crate::model::{AudioFormat, DownloadMode, VideoContainer};
+use crate::model::{AudioFormat, DownloadMode, SearchResultItem, VideoContainer};
 
 /// Field separator embedded in the `--print` template (unit separator, unlikely
 /// to appear in titles).
@@ -333,34 +333,35 @@ pub async fn probe(
     r
 }
 
-pub(crate) fn parse_search_json(bytes: &[u8]) -> Result<Vec<crate::model::SearchResultItem>> {
+pub(crate) fn parse_search_json(bytes: &[u8]) -> Result<Vec<SearchResultItem>> {
     let info: serde_json::Value = serde_json::from_slice(bytes)?;
-    let entries = info
-        .get("entries")
-        .and_then(|entries| entries.as_array())
-        .cloned()
-        .unwrap_or_default();
+    let Some(entries) = info.get("entries").and_then(|entries| entries.as_array()) else {
+        return Ok(Vec::new());
+    };
 
-    let mut results = Vec::new();
-    for entry in entries.iter().filter(|entry| !entry.is_null()) {
-        let Some(title) = str_field(entry, "title") else {
-            continue;
-        };
-        let Some(url) = str_field(entry, "webpage_url").or_else(|| str_field(entry, "url")) else {
-            continue;
-        };
-        results.push(crate::model::SearchResultItem {
-            title,
-            url,
-            video_id: str_field(entry, "id"),
-            uploader: str_field(entry, "uploader").or_else(|| str_field(entry, "channel")),
-            duration: entry.get("duration").and_then(|d| d.as_f64()),
-            thumbnail: str_field(entry, "thumbnail"),
-            view_count: entry.get("view_count").and_then(|v| v.as_u64()),
-        });
-    }
+    let results = entries
+        .iter()
+        .filter_map(search_result_item)
+        .collect::<Vec<_>>();
 
     Ok(results)
+}
+
+fn search_result_item(entry: &serde_json::Value) -> Option<SearchResultItem> {
+    if entry.is_null() {
+        return None;
+    }
+    let title = str_field(entry, "title")?;
+    let url = str_field(entry, "webpage_url").or_else(|| str_field(entry, "url"))?;
+    Some(SearchResultItem {
+        title,
+        url,
+        video_id: str_field(entry, "id"),
+        uploader: str_field(entry, "uploader").or_else(|| str_field(entry, "channel")),
+        duration: entry.get("duration").and_then(|d| d.as_f64()),
+        thumbnail: str_field(entry, "thumbnail"),
+        view_count: entry.get("view_count").and_then(|v| v.as_u64()),
+    })
 }
 
 pub(crate) fn search_spec(query: &str, limit: u32) -> String {
@@ -373,7 +374,7 @@ pub async fn search_youtube(
     limit: u32,
     extractor_args: Option<&str>,
     timeout: Option<Duration>,
-) -> Result<Vec<crate::model::SearchResultItem>> {
+) -> Result<Vec<SearchResultItem>> {
     let mut cmd = Command::new(ytdlp);
     cmd.args([
         "--dump-single-json",

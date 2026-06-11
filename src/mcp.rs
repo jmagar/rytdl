@@ -15,6 +15,19 @@ use crate::model::{DownloadInput, ProbeInput, SearchInput};
 use crate::search_app;
 use crate::service;
 
+fn text_tool_result<E: std::fmt::Display>(
+    result: std::result::Result<String, E>,
+) -> Result<CallToolResult, ErrorData> {
+    Ok(match result {
+        Ok(text) => CallToolResult::success(vec![Content::text(text)]),
+        Err(e) => error_tool_result(e),
+    })
+}
+
+fn error_tool_result(error: impl std::fmt::Display) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(format!("Error: {error}"))])
+}
+
 #[derive(Clone)]
 pub struct YtdlServer {
     cfg: Arc<Config>,
@@ -46,12 +59,7 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<DownloadInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        match service::run_download(&self.cfg, input).await {
-            Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Error: {e}"
-            ))])),
-        }
+        text_tool_result(service::run_download(&self.cfg, input).await)
     }
 
     /// Resolve title/duration/uploader/format counts for URLs without
@@ -64,12 +72,7 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<ProbeInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        match service::run_probe(&self.cfg, input).await {
-            Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Error: {e}"
-            ))])),
-        }
+        text_tool_result(service::run_probe(&self.cfg, input).await)
     }
 
     /// Search YouTube through yt-dlp without downloading. Returns result URLs that
@@ -82,12 +85,7 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        match service::run_search(&self.cfg, input).await {
-            Ok(text) => Ok(CallToolResult::success(vec![Content::text(text)])),
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Error: {e}"
-            ))])),
-        }
+        text_tool_result(service::run_search(&self.cfg, input).await)
     }
 
     /// Open the interactive YouTube search MCP App. UI-capable hosts render the
@@ -110,9 +108,7 @@ impl YtdlServer {
                 result.meta = Some(search_app::tool_meta());
                 Ok(result)
             }
-            Err(e) => Ok(CallToolResult::error(vec![Content::text(format!(
-                "Error: {e}"
-            ))])),
+            Err(e) => Ok(error_tool_result(e)),
         }
     }
 }

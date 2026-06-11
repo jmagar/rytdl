@@ -9,7 +9,7 @@ Download media from any [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported sit
 audio, video, or both, embed proper metadata + cover art, and transfer the result
 to an SSH remote configured when the plugin was enabled.
 
-Two MCP tools are provided by the bundled `youtube-dl` server:
+Four MCP tools are provided by the bundled `youtube-dl` server:
 
 | Tool | Purpose |
 | --- | --- |

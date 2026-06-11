@@ -8,6 +8,7 @@ pub const RESOURCE_MIME_TYPE: &str = "text/html;profile=mcp-app";
 const HTML_TEMPLATE: &str = include_str!("../assets/youtube-search-app.html");
 const APP_BRIDGE: &str = include_str!("../assets/ext-apps-vendored.js");
 const APP_BRIDGE_PLACEHOLDER: &str = "{{MCP_EXT_APPS_BUNDLE}}";
+const UI_META_KEY: &str = "ui";
 
 pub fn list_app_resources() -> ListResourcesResult {
     ListResourcesResult {
@@ -25,10 +26,7 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
     if uri != RESOURCE_URI {
         return None;
     }
-    let mut meta = Meta::new();
-    meta.0.insert(
-        "ui".into(),
-        json!({
+    let meta = ui_meta(json!({
             "csp": {
                 "connectDomains": [],
                 "resourceDomains": [
@@ -36,8 +34,7 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
                     "https://img.youtube.com"
                 ]
             }
-        }),
-    );
+    }));
     Some(ReadResourceResult::new(vec![ResourceContents::text(
         html(),
         RESOURCE_URI,
@@ -47,9 +44,12 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
 }
 
 pub fn tool_meta() -> Meta {
+    ui_meta(json!({ "resourceUri": RESOURCE_URI }))
+}
+
+fn ui_meta(value: serde_json::Value) -> Meta {
     let mut meta = Meta::new();
-    meta.0
-        .insert("ui".into(), json!({ "resourceUri": RESOURCE_URI }));
+    meta.0.insert(UI_META_KEY.into(), value);
     meta
 }
 
