@@ -363,6 +363,37 @@ pub(crate) fn parse_search_json(bytes: &[u8]) -> Result<Vec<crate::model::Search
     Ok(results)
 }
 
+pub(crate) fn search_spec(query: &str, limit: u32) -> String {
+    format!("ytsearch{}:{}", limit.clamp(1, 25), query.trim())
+}
+
+pub async fn search_youtube(
+    ytdlp: &Path,
+    query: &str,
+    limit: u32,
+    extractor_args: Option<&str>,
+    timeout: Option<Duration>,
+) -> Result<Vec<crate::model::SearchResultItem>> {
+    let mut cmd = Command::new(ytdlp);
+    cmd.args([
+        "--dump-single-json",
+        "--skip-download",
+        "--no-warnings",
+        "--quiet",
+    ]);
+    if let Some(extra) = extractor_args {
+        cmd.arg("--extractor-args").arg(extra);
+    }
+    cmd.arg(search_spec(query, limit));
+
+    let output = run_command(&mut cmd, timeout).await?;
+    if !output.status.success() {
+        bail!("{}", command_error_text(&output.stderr, &output.stdout));
+    }
+
+    parse_search_json(&output.stdout)
+}
+
 fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key)
         .and_then(|x| x.as_str())

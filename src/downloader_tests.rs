@@ -81,3 +81,12 @@ fn parse_search_json_extracts_youtube_entries() {
         ]
     );
 }
+
+#[test]
+fn search_query_spec_uses_ytsearch_limit_prefix() {
+    assert_eq!(super::search_spec("tiny desk", 7), "ytsearch7:tiny desk");
+    assert_eq!(
+        super::search_spec("  tiny desk  ", 2),
+        "ytsearch2:tiny desk"
+    );
+}
