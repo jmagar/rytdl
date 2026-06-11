@@ -132,8 +132,7 @@ impl ServerHandler for YtdlServer {
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_
-    {
+    ) -> impl std::future::Future<Output = Result<ListResourcesResult, ErrorData>> + Send + '_ {
         std::future::ready(Ok(search_app::list_app_resources()))
     }
 
@@ -141,12 +140,9 @@ impl ServerHandler for YtdlServer {
         &self,
         request: ReadResourceRequestParams,
         _context: rmcp::service::RequestContext<RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ReadResourceResult, ErrorData>> + Send + '_
-    {
-        std::future::ready(
-            search_app::read_app_resource(&request.uri).ok_or_else(|| {
-                ErrorData::invalid_params(format!("Unknown resource URI: {}", request.uri), None)
-            }),
-        )
+    ) -> impl std::future::Future<Output = Result<ReadResourceResult, ErrorData>> + Send + '_ {
+        std::future::ready(search_app::read_app_resource(&request.uri).ok_or_else(|| {
+            ErrorData::invalid_params(format!("Unknown resource URI: {}", request.uri), None)
+        }))
     }
 }

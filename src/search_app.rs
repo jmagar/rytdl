@@ -30,11 +30,12 @@ pub fn read_app_resource(uri: &str) -> Option<ReadResourceResult> {
             "resource_domains": ["https://i.ytimg.com", "https://img.youtube.com"]
         }),
     );
-    Some(ReadResourceResult::new(vec![
-        ResourceContents::text(HTML, RESOURCE_URI)
-            .with_mime_type("text/html")
-            .with_meta(meta),
-    ]))
+    Some(ReadResourceResult::new(vec![ResourceContents::text(
+        HTML,
+        RESOURCE_URI,
+    )
+    .with_mime_type("text/html")
+    .with_meta(meta)]))
 }
 
 pub fn tool_meta() -> Meta {
