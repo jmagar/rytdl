@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::model::SearchResultItem;
+
 use super::*;
 
 #[test]
@@ -25,4 +27,57 @@ async fn run_command_reports_timeout() {
         .to_string();
 
     assert!(err.contains("timed out after"));
+}
+
+#[test]
+fn parse_search_json_extracts_youtube_entries() {
+    let json = br#"{
+      "id": "slow pulp live",
+      "title": "slow pulp live",
+      "entries": [
+        {
+          "id": "abc123",
+          "title": "Slow Pulp - Falling Apart Live",
+          "webpage_url": "https://www.youtube.com/watch?v=abc123",
+          "uploader": "Slow Pulp",
+          "duration": 215.0,
+          "thumbnail": "https://i.ytimg.com/vi/abc123/hqdefault.jpg",
+          "view_count": 42000
+        },
+        null,
+        {
+          "id": "def456",
+          "title": "Slow Pulp - Idaho Live",
+          "url": "https://www.youtube.com/watch?v=def456",
+          "channel": "Live Room",
+          "duration": 188
+        }
+      ]
+    }"#;
+
+    let results = super::parse_search_json(json).unwrap();
+
+    assert_eq!(
+        results,
+        vec![
+            SearchResultItem {
+                title: "Slow Pulp - Falling Apart Live".into(),
+                url: "https://www.youtube.com/watch?v=abc123".into(),
+                video_id: Some("abc123".into()),
+                uploader: Some("Slow Pulp".into()),
+                duration: Some(215.0),
+                thumbnail: Some("https://i.ytimg.com/vi/abc123/hqdefault.jpg".into()),
+                view_count: Some(42000),
+            },
+            SearchResultItem {
+                title: "Slow Pulp - Idaho Live".into(),
+                url: "https://www.youtube.com/watch?v=def456".into(),
+                video_id: Some("def456".into()),
+                uploader: Some("Live Room".into()),
+                duration: Some(188.0),
+                thumbnail: None,
+                view_count: None,
+            },
+        ]
+    );
 }

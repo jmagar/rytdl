@@ -333,6 +333,36 @@ pub async fn probe(
     r
 }
 
+pub(crate) fn parse_search_json(bytes: &[u8]) -> Result<Vec<crate::model::SearchResultItem>> {
+    let info: serde_json::Value = serde_json::from_slice(bytes)?;
+    let entries = info
+        .get("entries")
+        .and_then(|entries| entries.as_array())
+        .cloned()
+        .unwrap_or_default();
+
+    let mut results = Vec::new();
+    for entry in entries.iter().filter(|entry| !entry.is_null()) {
+        let Some(title) = str_field(entry, "title") else {
+            continue;
+        };
+        let Some(url) = str_field(entry, "webpage_url").or_else(|| str_field(entry, "url")) else {
+            continue;
+        };
+        results.push(crate::model::SearchResultItem {
+            title,
+            url,
+            video_id: str_field(entry, "id"),
+            uploader: str_field(entry, "uploader").or_else(|| str_field(entry, "channel")),
+            duration: entry.get("duration").and_then(|d| d.as_f64()),
+            thumbnail: str_field(entry, "thumbnail"),
+            view_count: entry.get("view_count").and_then(|v| v.as_u64()),
+        });
+    }
+
+    Ok(results)
+}
+
 fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
     v.get(key)
         .and_then(|x| x.as_str())
