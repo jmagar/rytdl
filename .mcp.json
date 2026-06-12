@@ -14,6 +14,7 @@
         "YTDLP_PLEX_URL": "${user_config.plex_url}",
         "YTDLP_PLEX_TOKEN": "${user_config.plex_token}",
         "YTDLP_PLEX_PLAYLIST": "${user_config.plex_playlist}",
+        "YTDLP_CLEAN_METADATA": "${user_config.clean_metadata}",
         "YTDLP_AUTO_UPDATE": "${user_config.auto_update}",
         "YTDLP_MAX_AGE_DAYS": "${user_config.max_age_days}",
         "YTDLP_UPDATE_PRE": "${user_config.update_pre}",

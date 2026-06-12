@@ -34,6 +34,7 @@ fn test_config() -> Config {
         plex_url: None,
         plex_token: None,
         plex_playlist: None,
+        clean_metadata: true,
         auto_update: false,
         max_age_days: 14,
         update_pre: false,

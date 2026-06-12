@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "mcpServers": {
     "ytdl-mcp": {
@@ -51,8 +51,15 @@
     },
     {
       "name": "Plex playlist",
-      "description": "Optional default Plex playlist title or ID. Can be overridden per youtube_download call.",
-      "envVar": "YTDLP_PLEX_PLAYLIST"
+      "description": "Default Plex playlist title or ID. Default: yt-dlp Downloads. Can be overridden per youtube_download call.",
+      "envVar": "YTDLP_PLEX_PLAYLIST",
+      "default": "yt-dlp Downloads"
+    },
+    {
+      "name": "Clean title metadata",
+      "description": "Strip common YouTube title noise before embedding metadata. Default: true.",
+      "envVar": "YTDLP_CLEAN_METADATA",
+      "default": "true"
     },
     {
       "name": "yt-dlp extractor args",

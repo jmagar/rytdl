@@ -101,9 +101,12 @@ the ledger append fails, with `history_error` included in JSON output.
   on success it is removed unless `keep_local=true`.
 - Completed download calls are appended to a JSONL ledger, defaulting to the
   per-user state dir. Set `YTDLP_HISTORY_PATH` to put it somewhere specific.
-- Set `YTDLP_PLEX_URL`, `YTDLP_PLEX_TOKEN`, and optionally
-  `YTDLP_PLEX_PLAYLIST` to add downloaded audio tracks to a Plex playlist.
-  Per-call `plex_playlist` overrides the default. Plex playlist failures are
+- Embedded title metadata strips common YouTube noise such as `(Official Video)`,
+  `[Official Audio]`, trailing `| @channel`, and extra whitespace by default.
+  Set `YTDLP_CLEAN_METADATA=0` to preserve source titles exactly.
+- Set `YTDLP_PLEX_URL` and `YTDLP_PLEX_TOKEN` to add downloaded audio tracks to
+  the `yt-dlp Downloads` Plex playlist by default. Set `YTDLP_PLEX_PLAYLIST` or
+  pass per-call `plex_playlist` to override it. Plex playlist failures are
   reported without failing a completed download.
 - yt-dlp auto-updates at server startup when stale (configurable), so a fresh session
   self-heals against extractor breakage.

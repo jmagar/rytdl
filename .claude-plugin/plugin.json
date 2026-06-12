@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
   "author": {
     "name": "Jacob Magar"
@@ -79,8 +79,15 @@
     "plex_playlist": {
       "type": "string",
       "title": "Plex playlist",
-      "description": "Optional default Plex playlist title or ID to add downloaded audio tracks to. Can be overridden per youtube_download call.",
+      "description": "Default Plex playlist title or ID to add downloaded audio tracks to. Can be overridden per youtube_download call.",
+      "default": "yt-dlp Downloads",
       "required": false
+    },
+    "clean_metadata": {
+      "type": "boolean",
+      "title": "Clean title metadata",
+      "description": "Strip common YouTube title noise such as '(Official Video)', '[Official Audio]', trailing channel handles, and extra whitespace before embedding metadata.",
+      "default": true
     },
     "auto_update": {
       "type": "boolean",

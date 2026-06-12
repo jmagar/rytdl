@@ -91,6 +91,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
                 max_height: input.max_height,
                 archive_dir: archive_dir.as_deref(),
                 timeout: Some(cfg.ytdlp_timeout()),
+                clean_metadata: cfg.clean_metadata,
             },
         )
         .await;

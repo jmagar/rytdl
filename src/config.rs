@@ -18,6 +18,7 @@ pub const DEFAULT_SSH_OPTS: &[&str] = &[
 ];
 pub const DEFAULT_YTDLP_TIMEOUT_SECS: u64 = 30 * 60;
 pub const DEFAULT_TRANSFER_TIMEOUT_SECS: u64 = 10 * 60;
+pub const DEFAULT_PLEX_PLAYLIST: &str = "yt-dlp Downloads";
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -33,6 +34,7 @@ pub struct Config {
     pub plex_url: Option<String>,
     pub plex_token: Option<String>,
     pub plex_playlist: Option<String>,
+    pub clean_metadata: bool,
     pub auto_update: bool,
     pub max_age_days: i64,
     pub update_pre: bool,
@@ -58,6 +60,16 @@ impl Config {
             None => Vec::new(),
         };
 
+        let plex_url = non_empty("YTDLP_PLEX_URL");
+        let plex_token = non_empty("YTDLP_PLEX_TOKEN");
+        let plex_playlist = non_empty("YTDLP_PLEX_PLAYLIST").or_else(|| {
+            if plex_url.is_some() && plex_token.is_some() {
+                Some(DEFAULT_PLEX_PLAYLIST.into())
+            } else {
+                None
+            }
+        });
+
         Ok(Self {
             remote: non_empty("YTDLP_REMOTE"),
             dest_path: non_empty("YTDLP_REMOTE_PATH"),
@@ -67,9 +79,10 @@ impl Config {
             ssh_opts,
             archive_dir: non_empty("YTDLP_ARCHIVE_DIR"),
             history_path: non_empty("YTDLP_HISTORY_PATH"),
-            plex_url: non_empty("YTDLP_PLEX_URL"),
-            plex_token: non_empty("YTDLP_PLEX_TOKEN"),
-            plex_playlist: non_empty("YTDLP_PLEX_PLAYLIST"),
+            plex_url,
+            plex_token,
+            plex_playlist,
+            clean_metadata: as_bool("YTDLP_CLEAN_METADATA", true),
             auto_update: as_bool("YTDLP_AUTO_UPDATE", true),
             max_age_days: as_int("YTDLP_MAX_AGE_DAYS", 14),
             update_pre: as_bool("YTDLP_UPDATE_PRE", false),

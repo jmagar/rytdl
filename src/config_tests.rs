@@ -22,6 +22,7 @@ fn blank() -> Config {
         plex_url: None,
         plex_token: None,
         plex_playlist: None,
+        clean_metadata: true,
         auto_update: true,
         max_age_days: 14,
         update_pre: false,
@@ -165,6 +166,7 @@ fn from_env_result_wires_runtime_env_values() {
     assert_eq!(cfg.plex_url.as_deref(), Some("http://plex.local:32400"));
     assert_eq!(cfg.plex_token.as_deref(), Some("plex-token"));
     assert_eq!(cfg.plex_playlist.as_deref(), Some("Downloads"));
+    assert!(cfg.clean_metadata);
     assert_eq!(
         cfg.ytdlp_sha256.as_deref(),
         Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
@@ -172,6 +174,31 @@ fn from_env_result_wires_runtime_env_values() {
     assert_eq!(cfg.ytdlp_timeout_secs, 77);
     assert_eq!(cfg.transfer_timeout_secs, 88);
 
+    clear_test_env();
+}
+
+#[test]
+fn from_env_result_defaults_plex_playlist_when_plex_is_configured() {
+    let _guard = env_lock();
+    clear_test_env();
+    std::env::set_var("YTDLP_PLEX_URL", "http://plex.local:32400");
+    std::env::set_var("YTDLP_PLEX_TOKEN", "plex-token");
+
+    let cfg = Config::from_env_result().unwrap();
+
+    assert_eq!(cfg.plex_playlist.as_deref(), Some(DEFAULT_PLEX_PLAYLIST));
+    clear_test_env();
+}
+
+#[test]
+fn from_env_result_can_disable_metadata_cleanup() {
+    let _guard = env_lock();
+    clear_test_env();
+    std::env::set_var("YTDLP_CLEAN_METADATA", "0");
+
+    let cfg = Config::from_env_result().unwrap();
+
+    assert!(!cfg.clean_metadata);
     clear_test_env();
 }
 
@@ -186,6 +213,7 @@ fn clear_test_env() {
         "YTDLP_PLEX_URL",
         "YTDLP_PLEX_TOKEN",
         "YTDLP_PLEX_PLAYLIST",
+        "YTDLP_CLEAN_METADATA",
         "YTDLP_SHA256",
         "FFMPEG_SHA256",
         "YTDLP_TIMEOUT_SECS",

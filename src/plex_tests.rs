@@ -158,6 +158,7 @@ fn add_downloaded_audio_without_audio_files_does_not_require_plex_config() {
         plex_url: None,
         plex_token: None,
         plex_playlist: None,
+        clean_metadata: true,
         auto_update: false,
         max_age_days: 14,
         update_pre: false,

@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
+use crate::bootstrap::Tools;
 use crate::model::SearchResultItem;
 
 use super::*;
@@ -124,4 +125,69 @@ fn search_query_spec_uses_ytsearch_limit_prefix() {
         super::search_spec("  tiny desk  ", 2),
         "ytsearch2:tiny desk"
     );
+}
+
+#[test]
+fn common_args_preserve_source_metadata_sidecars() {
+    let tools = Tools {
+        ytdlp: "yt-dlp".into(),
+        ffmpeg_dir: None,
+        extractor_args: None,
+    };
+
+    let args = super::common_args(std::path::Path::new("/tmp/stage"), "audio", &tools, None);
+
+    assert!(contains_pair(
+        &args,
+        "--parse-metadata",
+        super::PARSE_ARTIST
+    ));
+    assert!(contains_pair(
+        &args,
+        "--parse-metadata",
+        super::PARSE_PLAYLIST_ALBUM
+    ));
+    assert!(args.iter().any(|arg| arg == "--write-info-json"));
+    assert!(args.iter().any(|arg| arg == "--write-thumbnail"));
+    assert!(args.iter().any(|arg| arg == "--write-description"));
+    assert!(contains_pair(&args, "--convert-thumbnails", "jpg"));
+}
+
+#[test]
+fn metadata_cleanup_args_normalize_common_youtube_title_noise() {
+    let mut args = Vec::new();
+
+    super::add_metadata_cleanup_args(&mut args);
+
+    assert!(contains_quad(
+        &args,
+        "--replace-in-metadata",
+        "title",
+        r"(?i)\s*[\[(](official\s+(music\s+)?video|official\s+audio|audio\s+only|lyric(s)?(\s+video)?|visuali[sz]er|music\s+video|hd|4k)[\])]\s*",
+        ""
+    ));
+    assert!(contains_quad(
+        &args,
+        "--replace-in-metadata",
+        "title",
+        r"\s*[|｜]\s*@[\w.-]+\s*$",
+        ""
+    ));
+    assert!(contains_quad(
+        &args,
+        "--replace-in-metadata",
+        "title",
+        r"^\s+|\s+$",
+        ""
+    ));
+}
+
+fn contains_pair(args: &[String], flag: &str, value: &str) -> bool {
+    args.windows(2)
+        .any(|pair| pair[0] == flag && pair[1] == value)
+}
+
+fn contains_quad(args: &[String], a: &str, b: &str, c: &str, d: &str) -> bool {
+    args.windows(4)
+        .any(|quad| quad[0] == a && quad[1] == b && quad[2] == c && quad[3] == d)
 }
