@@ -133,6 +133,12 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 - **Gemini CLI extension** — `gemini-extension.json`; install with
   `gemini extensions install https://github.com/jmagar/ytdl-mcp` (needs the
   binary on `PATH`).
+- **MCP bundle (`.mcpb`)** — `mcpb/manifest.json` defines a `binary`-type
+  bundle for one-click install in MCPB-capable desktop hosts. The
+  `ytdl-mcp.mcpb` asset on each `v*` release packs the linux + windows binaries
+  (`platforms: ["linux", "win32"]`) and prompts for config via the manifest's
+  `user_config`. Build one locally from prebuilt binaries with
+  `scripts/build-mcpb.sh` (needs Node for the `@anthropic-ai/mcpb` CLI).
 
 ## Configuration (environment variables)
 
