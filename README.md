@@ -174,9 +174,12 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 - **MCP bundle (`.mcpb` / `.dxt`)** — `mcpb/manifest.json` defines a
   `binary`-type bundle for one-click install in MCPB-capable desktop hosts.
   Every main release publishes `ytdl-mcp.mcpb` plus a legacy `ytdl-mcp.dxt`
-  alias; both contain the same linux + windows binaries and prompt for config
-  via the manifest's `user_config`. Build one locally from prebuilt binaries
-  with `scripts/build-mcpb.sh` (needs Node for the `@anthropic-ai/mcpb` CLI).
+  alias; both contain the same linux + windows binaries. The bundle defaults
+  optional config values to empty strings so Claude Desktop can install it
+  before you fill in the SSH destination settings. Configure at least the
+  remote and audio destination in the extension settings before downloading.
+  Build one locally from prebuilt binaries with `scripts/build-mcpb.sh` (needs
+  Node for the `@anthropic-ai/mcpb` CLI).
 
 ## Configuration (environment variables)
 

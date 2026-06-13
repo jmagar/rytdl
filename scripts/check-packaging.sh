@@ -130,6 +130,22 @@ if [ -n "$unused_mcpb_keys" ]; then
   fail "mcpb/manifest.json user_config keys are not mapped in mcp_config.env: ${unused_mcpb_keys//$'\n'/, }"
 fi
 
+missing_mcpb_defaults="$(jq -r '
+  .server.mcp_config.env | .. | strings
+  | capture("\\$\\{user_config\\.(?<key>[A-Za-z0-9_]+)\\}")? | .key
+' "$mcpb_manifest" | sort -u | while IFS= read -r key; do
+  jq -e --arg key "$key" '.user_config[$key] | has("default")' "$mcpb_manifest" >/dev/null \
+    || printf '%s\n' "$key"
+done)"
+if [ -n "$missing_mcpb_defaults" ]; then
+  fail "mcpb/manifest.json env-backed user_config keys need defaults for Desktop installer compatibility: ${missing_mcpb_defaults//$'\n'/, }"
+fi
+
+required_mcpb_keys="$(jq -r '.user_config | to_entries[] | select(.value.required == true) | .key' "$mcpb_manifest")"
+if [ -n "$required_mcpb_keys" ]; then
+  fail "mcpb/manifest.json should avoid required user_config gates during Desktop install: ${required_mcpb_keys//$'\n'/, }"
+fi
+
 # Keep the bundle's user_config keys identical to the Claude plugin's set so the
 # four distribution surfaces never drift apart.
 drift_mcpb_keys="$(comm -3 "$tmp_dir/plugin_keys" "$tmp_dir/mcpb_keys")"
