@@ -23,8 +23,9 @@ needs neither pre-installed — the one binary is the whole install.
   sidecars are preserved next to the media for future retagging/indexing.
   Common YouTube title noise like `(Official Video)`, `[Official Audio]`, and
   trailing channel handles is stripped from embedded title metadata by default.
-- **Self-contained** — downloads and caches its own yt-dlp + ffmpeg; no Python
-  venv, no system packages.
+- **Self-contained paths** — the binary downloads/caches yt-dlp + ffmpeg when
+  run directly; the container image bakes in ffmpeg, fpcalc, SSH, and rsync for
+  media-host batch jobs.
 - **Self-installing** — `ytdl-mcp setup` registers the server into Claude Code,
   Codex, and/or Gemini CLI via each tool's own `mcp add`.
 - **Robust transfers** — `rsync --protect-args` when present, `scp` otherwise;
@@ -46,6 +47,7 @@ needs neither pre-installed — the one binary is the whole install.
 | `youtube_search_ui` | Open an interactive YouTube search UI in MCP App-capable hosts. |
 | `youtube_download` | Download one or more URLs (audio/video/both) and rsync/scp them to a remote dir. |
 | `youtube_probe` | Read-only: resolve title/duration/uploader/format counts without downloading. |
+| `youtube_identify` | Fingerprint local audio with `fpcalc`, return AcoustID/MusicBrainz candidates, preview canonical tags, and optionally write high-confidence tags. |
 | `youtube_stats` | Summarize the download ledger: totals, file kinds, uploaders, and recent entries. |
 
 ### `youtube_download` parameters
@@ -75,11 +77,32 @@ default playlist is `yt-dlp Downloads`; set `YTDLP_PLEX_PLAYLIST` or pass
 responses include a `plex_playlist` summary with `matched`, `added`,
 `already_present`, and `missing` counts.
 
-Canonical metadata matching through MusicBrainz/AcoustID is tracked in
-`docs/musicbrainz-acoustid.md`; it should land as an opt-in retagging flow after
-fingerprint confidence and rate limiting are proven.
+Canonical metadata matching through MusicBrainz/AcoustID is documented in
+`docs/musicbrainz-acoustid.md`. `youtube_download` automatically runs
+high-confidence MusicBrainz retagging for downloaded audio when
+`YTDLP_ACOUSTID_CLIENT_KEY` is configured; `youtube_identify` remains available
+for previewing or repairing existing library files, with manual tag writes
+enabled by `write_tags=true`.
 
 `youtube_probe` takes `urls` and `response_format`.
+
+### `youtube_identify` parameters
+
+| Param | Default | Meaning |
+| --- | --- | --- |
+| `paths` | — (required) | One local audio file path string or an array of paths. |
+| `write_tags` | `false` | Write high-confidence MusicBrainz tag previews back to the audio files. |
+| `response_format` | `markdown` | `markdown` or `json`. |
+
+`youtube_identify` runs Chromaprint `fpcalc`, sends the fingerprint to AcoustID,
+and returns MusicBrainz recording candidates. When the best candidate is
+high-confidence, it also fetches the MusicBrainz recording/release data and
+includes a `retag_preview` showing the canonical artist, title, release, release
+date, release type, track number, and MusicBrainz IDs. By default it is
+preview-only. With `write_tags=true`, it writes the preview to the file with
+Lofty, including common title/artist/album/date/track fields plus MusicBrainz
+recording, release, release-group, and release-type tags. It requires
+`YTDLP_ACOUSTID_CLIENT_KEY`; set `FPCALC_PATH` if `fpcalc` is not on `PATH`.
 
 ### `youtube_search` parameters
 
@@ -144,6 +167,10 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 - **Gemini CLI extension** — `gemini-extension.json`; install with
   `gemini extensions install https://github.com/jmagar/ytdl-mcp` (needs the
   binary on `PATH`).
+- **Container image** — `ghcr.io/jmagar/ytdl-mcp:main` is published on every
+  push to `main`, or build locally with `docker build -t ytdl-mcp:local .`. It
+  includes `ffmpeg`, `fpcalc`, `openssh-client`, and `rsync`. See
+  [`docs/container.md`](docs/container.md) for MCP and mounted-library examples.
 
 ## Configuration (environment variables)
 
@@ -161,6 +188,9 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 | `YTDLP_PLEX_TOKEN` | — | Plex auth token for playlist/search API calls. |
 | `YTDLP_PLEX_PLAYLIST` | `yt-dlp Downloads` when Plex URL/token are set | Default Plex playlist title or ID for `youtube_download`; can be overridden with the `plex_playlist` parameter. |
 | `YTDLP_CLEAN_METADATA` | `1` | Strip common YouTube title noise before embedding metadata. Set to `0` to preserve source titles exactly. |
+| `YTDLP_ACOUSTID_CLIENT_KEY` | — | AcoustID application API key required by `youtube_identify`; when set, `youtube_download` automatically writes high-confidence MusicBrainz tags to downloaded audio before transfer. |
+| `FPCALC_PATH` | `fpcalc` on `PATH` | Optional explicit path to the Chromaprint `fpcalc` executable. |
+| `YTDLP_MUSICBRAINZ_CONTACT` | GitHub repo URL | Contact URL/email included in lookup User-Agent strings. |
 | `YTDLP_AUTO_UPDATE` | `1` | Re-download yt-dlp when stale. |
 | `YTDLP_MAX_AGE_DAYS` | `14` | Staleness threshold (days). |
 | `YTDLP_UPDATE_PRE` | `0` | Track yt-dlp's nightly channel. |
@@ -192,6 +222,8 @@ executable bytes; they are not upstream signature verification.
 - Passwordless key-based SSH auth to the remote.
 - yt-dlp and ffmpeg are fetched automatically (override with `YTDLP_PATH` /
   `FFMPEG_PATH`, or just have them on `PATH`).
+- `youtube_identify` additionally needs `fpcalc`; the container image includes
+  it via `libchromaprint-tools`.
 
 ## Build from source
 

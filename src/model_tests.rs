@@ -58,6 +58,22 @@ fn download_input_honors_explicit_fields() {
 }
 
 #[test]
+fn identify_input_accepts_single_path_or_array() {
+    let one: IdentifyInput = serde_json::from_str(r#"{"paths":"/tmp/song.mp3"}"#).unwrap();
+    assert_eq!(one.paths.into_vec(), vec!["/tmp/song.mp3"]);
+    assert_eq!(one.response_format, ResponseFormat::Markdown);
+    assert!(!one.write_tags);
+
+    let many: IdentifyInput = serde_json::from_str(
+        r#"{"paths":["/tmp/a.mp3","/tmp/b.m4a"],"write_tags":true,"response_format":"json"}"#,
+    )
+    .unwrap();
+    assert_eq!(many.paths.into_vec(), vec!["/tmp/a.mp3", "/tmp/b.m4a"]);
+    assert_eq!(many.response_format, ResponseFormat::Json);
+    assert!(many.write_tags);
+}
+
+#[test]
 fn search_input_defaults_limit_and_markdown() {
     let input: SearchInput = serde_json::from_str(r#"{"query":"slow pulp live"}"#).unwrap();
 

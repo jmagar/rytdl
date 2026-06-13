@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
   "author": {
     "name": "Jacob Magar"
@@ -88,6 +88,25 @@
       "title": "Clean title metadata",
       "description": "Strip common YouTube title noise such as '(Official Video)', '[Official Audio]', trailing channel handles, and extra whitespace before embedding metadata.",
       "default": true
+    },
+    "acoustid_client_key": {
+      "type": "string",
+      "title": "AcoustID client key",
+      "description": "Application API key for AcoustID lookups used by youtube_identify. Optional unless using identify.",
+      "required": false,
+      "sensitive": true
+    },
+    "fpcalc_path": {
+      "type": "string",
+      "title": "fpcalc path",
+      "description": "Optional path to the Chromaprint fpcalc executable. If blank, youtube_identify searches PATH.",
+      "required": false
+    },
+    "musicbrainz_contact": {
+      "type": "string",
+      "title": "MusicBrainz contact",
+      "description": "Contact URL or email included in the User-Agent for metadata lookup requests.",
+      "required": false
     },
     "auto_update": {
       "type": "boolean",

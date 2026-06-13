@@ -11,7 +11,7 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler};
 
 use crate::config::Config;
-use crate::model::{DownloadInput, ProbeInput, SearchInput, StatsInput};
+use crate::model::{DownloadInput, IdentifyInput, ProbeInput, SearchInput, StatsInput};
 use crate::search_app;
 use crate::service;
 
@@ -77,6 +77,19 @@ impl YtdlServer {
         Parameters(input): Parameters<ProbeInput>,
     ) -> Result<CallToolResult, ErrorData> {
         text_tool_result(service::run_probe(&self.cfg, input).await)
+    }
+
+    /// Fingerprint local audio files with Chromaprint/fpcalc and return
+    /// AcoustID/MusicBrainz candidates, with optional tag writing.
+    #[tool(
+        name = "youtube_identify",
+        description = "Identify local audio files with fpcalc + AcoustID, return MusicBrainz recording candidates, and optionally write high-confidence canonical tags."
+    )]
+    async fn youtube_identify(
+        &self,
+        Parameters(input): Parameters<IdentifyInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        text_tool_result(service::run_identify(&self.cfg, input).await)
     }
 
     /// Search YouTube through yt-dlp without downloading. Returns result URLs that

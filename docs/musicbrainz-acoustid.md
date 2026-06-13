@@ -48,13 +48,37 @@ matching is unavailable, slow, ambiguous, or not configured.
   route.
 - `fpcalc` would be simpler operationally, but it is not installed here today
   and would need cross-platform bootstrap/download support.
-- `lofty` is the likely tag-writing crate for MP3/M4A/FLAC/Opus metadata.
+- `lofty` writes MP3/M4A/FLAC/Opus metadata for accepted matches.
 
-## First safe milestone
+## Implemented workflow
 
-Add a read-only `youtube_identify` tool that fingerprints local staged/downloaded
-audio and returns candidate MusicBrainz matches with confidence reasons. Once
-that is trustworthy, add opt-in tag writing to `youtube_download`.
+`youtube_identify` fingerprints local audio with Chromaprint `fpcalc`, sends
+fingerprints to AcoustID, and returns candidate MusicBrainz recording matches.
+
+For high-confidence candidates, it now performs a rate-limited MusicBrainz
+recording lookup and returns a `retag_preview` containing the canonical
+artist/title/release/date/type/track number plus MusicBrainz recording/release
+IDs. It remains preview-only by default. Set `write_tags=true` to write the
+preview to the file using Lofty.
+
+`youtube_download` also runs this same high-confidence retagging path
+automatically for downloaded audio files before transfer when
+`YTDLP_ACOUSTID_CLIENT_KEY` is configured. If matching is unavailable,
+ambiguous, or errors, the download still proceeds and reports a metadata
+retagging summary in the response.
+
+When tag writing is enabled, ytdl-mcp writes:
+
+- common fields: artist, title, album, album artist, date/release date, track
+  number
+- MusicBrainz fields: recording ID, release ID, release-group ID, release type
+
+Current requirements:
+
+- `YTDLP_ACOUSTID_CLIENT_KEY` must be configured.
+- `fpcalc` must be available on `PATH`, or `FPCALC_PATH` must point to it.
+- `YTDLP_MUSICBRAINZ_CONTACT` is optional but should be set to a real contact
+  when using MusicBrainz-derived metadata workflows.
 
 Sources:
 - https://musicbrainz.org/doc/MusicBrainz_API

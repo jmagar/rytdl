@@ -1,6 +1,6 @@
 [package]
 name = "ytdl-mcp"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 description = "Cross-platform MCP server that downloads media with yt-dlp, tags it, and rsyncs it to an SSH remote."
 license = "MIT"
@@ -61,6 +61,7 @@ fs2 = "0.4.3"
 dialoguer = { version = "0.12.0", default-features = false }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+lofty = "0.24.0"
 
 [profile.release]
 strip = true

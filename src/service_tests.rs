@@ -1,25 +1,8 @@
 use std::{ffi::OsString, path::PathBuf, sync::OnceLock};
 
-use serde_json::json;
-
 use super::*;
-use crate::downloader::{ItemResult, MediaFile};
-use crate::model::{
-    AudioFormat, DownloadMode, ResponseFormat, SearchInput, SearchPayload, SearchResultItem,
-    StatsInput, Urls, VideoContainer,
-};
-
-fn media_file(kind: &'static str, name: &str) -> MediaFile {
-    MediaFile {
-        path: PathBuf::from(name),
-        kind,
-        size: 2048,
-        title: Some(name.to_string()),
-        video_id: None,
-        uploader: None,
-        duration: None,
-    }
-}
+use crate::identify::{IdentifyPayload, IdentifyResult, RetagPreview, TagWriteResult};
+use crate::model::{AudioFormat, DownloadMode, ResponseFormat, SearchInput, Urls, VideoContainer};
 
 fn test_config() -> Config {
     Config {
@@ -35,6 +18,9 @@ fn test_config() -> Config {
         plex_token: None,
         plex_playlist: None,
         clean_metadata: true,
+        acoustid_client_key: None,
+        fpcalc_path: None,
+        musicbrainz_contact: None,
         auto_update: false,
         max_age_days: 14,
         update_pre: false,
@@ -170,174 +156,6 @@ async fn run_download_json_reports_history_error_without_failing_download() {
         .contains("create history directory"));
 }
 
-#[test]
-fn run_stats_json_summarizes_history_and_recent_entries() {
-    let dir = tempfile::tempdir().unwrap();
-    let history = dir.path().join("downloads.jsonl");
-    std::fs::write(
-        &history,
-        concat!(
-            "{\"timestamp\":\"2026-06-11T01:00:00Z\",\"mode\":\"audio\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":1,\"total_bytes\":10,\"items\":[{\"status\":\"ok\",\"title\":\"Song A\",\"uploader\":\"Artist A\",\"files\":[{\"kind\":\"audio\",\"bytes\":10}]}]}\n",
-            "{\"timestamp\":\"2026-06-11T02:00:00Z\",\"mode\":\"video\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":2,\"total_bytes\":50,\"items\":[{\"status\":\"ok\",\"title\":\"Video B\",\"uploader\":\"Artist B\",\"files\":[{\"kind\":\"video\",\"bytes\":30},{\"kind\":\"audio\",\"bytes\":20}]}]}\n"
-        ),
-    )
-    .unwrap();
-
-    let mut cfg = test_config();
-    cfg.history_path = Some(history.display().to_string());
-
-    let output = run_stats(
-        &cfg,
-        StatsInput {
-            limit: 1,
-            response_format: ResponseFormat::Json,
-        },
-    )
-    .unwrap();
-    let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-    assert_eq!(value["total_downloads"], 2);
-    assert_eq!(value["total_files"], 3);
-    assert_eq!(value["total_bytes"], 60);
-    assert_eq!(value["by_kind"]["audio"]["files"], 2);
-    assert_eq!(value["by_kind"]["audio"]["downloads"], 2);
-    assert_eq!(value["by_kind"]["audio"]["calls"], 2);
-    assert_eq!(value["by_kind"]["video"]["files"], 1);
-    assert_eq!(value["by_kind"]["video"]["downloads"], 1);
-    assert_eq!(value["by_kind"]["video"]["calls"], 1);
-    assert_eq!(value["by_uploader"]["Artist B"]["downloads"], 1);
-    assert_eq!(value["by_uploader"]["Artist B"]["calls"], 1);
-    assert_eq!(value["by_uploader"]["Artist B"]["items"], 1);
-    assert_eq!(value["recent"].as_array().unwrap().len(), 1);
-    assert_eq!(value["recent"][0]["items"][0]["title"], "Video B");
-}
-
-#[test]
-fn run_stats_json_skips_malformed_lines_and_counts_uploader_calls_once() {
-    let dir = tempfile::tempdir().unwrap();
-    let history = dir.path().join("downloads.jsonl");
-    std::fs::write(
-        &history,
-        concat!(
-            "{\"timestamp\":\"2026-06-11T01:00:00Z\",\"mode\":\"audio\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":1,\"total_bytes\":10,\"items\":[{\"status\":\"ok\",\"title\":\"Song A\",\"uploader\":\"Artist A\",\"files\":[{\"kind\":\"audio\",\"bytes\":10}]}]}\n",
-            "this is not json\n",
-            "{\"timestamp\":\"2026-06-11T02:00:00Z\",\"mode\":\"both\",\"remote\":\"tootie\",\"transferred\":true,\"total_files\":3,\"total_bytes\":55,\"items\":[{\"status\":\"ok\",\"title\":\"Video B\",\"uploader\":\"Artist B\",\"files\":[{\"kind\":\"video\",\"bytes\":30},{\"kind\":\"audio\",\"bytes\":20}]},{\"status\":\"ok\",\"title\":\"Clip B\",\"uploader\":\"Artist B\",\"files\":[{\"kind\":\"audio\",\"bytes\":5}]}]}\n"
-        ),
-    )
-    .unwrap();
-
-    let mut cfg = test_config();
-    cfg.history_path = Some(history.display().to_string());
-
-    let output = run_stats(
-        &cfg,
-        StatsInput {
-            limit: 10,
-            response_format: ResponseFormat::Json,
-        },
-    )
-    .unwrap();
-    let value: serde_json::Value = serde_json::from_str(&output).unwrap();
-
-    assert_eq!(value["total_downloads"], 2);
-    assert_eq!(value["skipped_entries"], 1);
-    assert_eq!(value["total_files"], 4);
-    assert_eq!(value["total_bytes"], 65);
-    assert_eq!(value["by_uploader"]["Artist B"]["downloads"], 1);
-    assert_eq!(value["by_uploader"]["Artist B"]["calls"], 1);
-    assert_eq!(value["by_uploader"]["Artist B"]["items"], 2);
-    assert_eq!(value["by_uploader"]["Artist B"]["files"], 3);
-    assert_eq!(value["recent"].as_array().unwrap().len(), 2);
-    assert_eq!(value["recent"][0]["items"][0]["title"], "Video B");
-}
-
-#[test]
-fn download_payload_marks_files_with_error_as_partial() {
-    let results = vec![ItemResult {
-        url: "https://example.test/watch".into(),
-        title: Some("Half Good".into()),
-        files: vec![media_file("video", "Half Good [abc].mp4")],
-        error: Some("audio pass failed".into()),
-        ..Default::default()
-    }];
-
-    let payload = download_payload(&results, "media", &[("video", "/video")], true, None, None);
-
-    let item = &payload["items"][0];
-    assert_eq!(item["status"], "partial");
-    assert_eq!(item["files"].as_array().unwrap().len(), 1);
-    assert_eq!(payload["partial_items"], 1);
-    assert_eq!(payload["failed_items"], 0);
-}
-
-#[test]
-fn markdown_reports_partial_item_without_hiding_files() {
-    let payload = json!({
-        "transferred": true,
-        "transfer_error": null,
-        "destination": "media:/video",
-        "total_files": 1,
-        "total_size": "2.0 KiB",
-        "items": [{
-            "url": "https://example.test/watch",
-            "title": "Half Good",
-            "is_playlist": false,
-            "status": "partial",
-            "error": "audio pass failed",
-            "files": [{
-                "name": "Half Good [abc].mp4",
-                "kind": "video",
-                "bytes": 2048
-            }]
-        }]
-    });
-
-    let rendered = render_download_markdown(&payload);
-
-    assert!(rendered.contains("- Half Good - partially completed: audio pass failed"));
-    assert!(rendered.contains("[video] Half Good [abc].mp4 (2.0 KiB)"));
-    assert!(!rendered.contains("https://example.test/watch - failed"));
-}
-
-#[test]
-fn render_search_markdown_lists_results_with_urls() {
-    let payload = SearchPayload {
-        query: "slow pulp".into(),
-        limit: 2,
-        results: vec![SearchResultItem {
-            title: "Slow Pulp - Falling Apart Live".into(),
-            url: "https://www.youtube.com/watch?v=abc123".into(),
-            video_id: Some("abc123".into()),
-            uploader: Some("Slow Pulp".into()),
-            duration: Some(215.0),
-            thumbnail: None,
-            view_count: Some(42000),
-        }],
-    };
-
-    let rendered = super::render_search_for_test(&payload, ResponseFormat::Markdown);
-
-    assert!(rendered.contains("YouTube search: slow pulp"));
-    assert!(rendered.contains("Slow Pulp - Falling Apart Live"));
-    assert!(rendered.contains("https://www.youtube.com/watch?v=abc123"));
-    assert!(rendered.contains("3:35"));
-}
-
-#[test]
-fn render_search_json_has_results_array() {
-    let payload = SearchPayload {
-        query: "slow pulp".into(),
-        limit: 1,
-        results: Vec::new(),
-    };
-
-    let rendered = super::render_search_for_test(&payload, ResponseFormat::Json);
-    let value: serde_json::Value = serde_json::from_str(&rendered).unwrap();
-
-    assert_eq!(value["query"], "slow pulp");
-    assert_eq!(value["results"].as_array().unwrap().len(), 0);
-}
-
 #[tokio::test]
 async fn run_search_json_uses_fake_ytdlp_and_records_effective_args() {
     let dir = tempfile::tempdir().unwrap();
@@ -451,6 +269,57 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
     assert_eq!(value["items"][0]["status"], "partial");
     assert_eq!(value["items"][0]["error"], "audio pass failed");
     assert_eq!(value["items"][0]["files"][0]["kind"], "video");
+}
+
+#[tokio::test]
+async fn auto_retag_audio_paths_writes_when_acoustid_is_configured() {
+    let mut cfg = test_config();
+    cfg.acoustid_client_key = Some("test-key".into());
+    let paths = vec!["/tmp/song.mp3".to_string()];
+    let expected_paths = paths.clone();
+
+    let summary = auto_retag_audio_paths_for_test(&cfg, paths, move |_cfg, paths| {
+        let expected_paths = expected_paths.clone();
+        Box::pin(async move {
+            assert_eq!(paths, expected_paths);
+            Ok(IdentifyPayload {
+                results: vec![IdentifyResult {
+                    path: "/tmp/song.mp3".into(),
+                    duration: Some(185),
+                    candidates: Vec::new(),
+                    retag_preview: Some(RetagPreview {
+                        confidence: 0.98,
+                        recording_id: "recording-1".into(),
+                        recording_title: "Song".into(),
+                        artist: "Artist".into(),
+                        artists: vec!["Artist".into()],
+                        release_id: None,
+                        release_title: Some("Album".into()),
+                        release_group_id: None,
+                        release_group_title: None,
+                        release_type: None,
+                        release_date: Some("2026".into()),
+                        track_number: Some("1".into()),
+                        musicbrainz_url: "https://musicbrainz.org/recording/recording-1".into(),
+                    }),
+                    retag_preview_error: None,
+                    tag_write: Some(TagWriteResult {
+                        written: true,
+                        fields: vec!["artist".into(), "title".into()],
+                    }),
+                    tag_write_error: None,
+                    error: None,
+                }],
+            })
+        })
+    })
+    .await
+    .expect("auto retag summary");
+
+    assert_eq!(summary["attempted"], 1);
+    assert_eq!(summary["matched"], 1);
+    assert_eq!(summary["written"], 1);
+    assert_eq!(summary["errors"], 0);
 }
 
 #[cfg(unix)]

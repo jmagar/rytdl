@@ -23,6 +23,9 @@ fn blank() -> Config {
         plex_token: None,
         plex_playlist: None,
         clean_metadata: true,
+        acoustid_client_key: None,
+        fpcalc_path: None,
+        musicbrainz_contact: None,
         auto_update: true,
         max_age_days: 14,
         update_pre: false,
@@ -148,6 +151,9 @@ fn from_env_result_wires_runtime_env_values() {
     std::env::set_var("YTDLP_PLEX_URL", "http://plex.local:32400");
     std::env::set_var("YTDLP_PLEX_TOKEN", "plex-token");
     std::env::set_var("YTDLP_PLEX_PLAYLIST", "Downloads");
+    std::env::set_var("YTDLP_ACOUSTID_CLIENT_KEY", "acoustid-key");
+    std::env::set_var("FPCALC_PATH", "/opt/bin/fpcalc");
+    std::env::set_var("YTDLP_MUSICBRAINZ_CONTACT", "https://example.test/contact");
     std::env::set_var(
         "YTDLP_SHA256",
         "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789",
@@ -167,6 +173,12 @@ fn from_env_result_wires_runtime_env_values() {
     assert_eq!(cfg.plex_token.as_deref(), Some("plex-token"));
     assert_eq!(cfg.plex_playlist.as_deref(), Some("Downloads"));
     assert!(cfg.clean_metadata);
+    assert_eq!(cfg.acoustid_client_key.as_deref(), Some("acoustid-key"));
+    assert_eq!(cfg.fpcalc_path.as_deref(), Some("/opt/bin/fpcalc"));
+    assert_eq!(
+        cfg.musicbrainz_contact.as_deref(),
+        Some("https://example.test/contact")
+    );
     assert_eq!(
         cfg.ytdlp_sha256.as_deref(),
         Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
@@ -214,6 +226,9 @@ fn clear_test_env() {
         "YTDLP_PLEX_TOKEN",
         "YTDLP_PLEX_PLAYLIST",
         "YTDLP_CLEAN_METADATA",
+        "YTDLP_ACOUSTID_CLIENT_KEY",
+        "FPCALC_PATH",
+        "YTDLP_MUSICBRAINZ_CONTACT",
         "YTDLP_SHA256",
         "FFMPEG_SHA256",
         "YTDLP_TIMEOUT_SECS",

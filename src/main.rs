@@ -8,6 +8,7 @@ mod bootstrap;
 mod config;
 mod downloader;
 mod history;
+mod identify;
 mod mcp;
 mod model;
 mod plex;

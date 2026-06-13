@@ -196,6 +196,21 @@ pub(crate) fn render_download_markdown(p: &serde_json::Value) -> String {
                 .unwrap_or(0)
         ));
     }
+    if let Some(retag) = p["metadata_retag"].as_object() {
+        lines.push(String::new());
+        if let Some(error) = retag.get("error").and_then(|v| v.as_str()) {
+            lines.push(format!("Metadata retagging failed: {error}"));
+        } else {
+            lines.push(format!(
+                "Metadata retagging: scanned {}, matched {}, wrote {}, skipped {}, errors {}.",
+                retag.get("attempted").and_then(|v| v.as_u64()).unwrap_or(0),
+                retag.get("matched").and_then(|v| v.as_u64()).unwrap_or(0),
+                retag.get("written").and_then(|v| v.as_u64()).unwrap_or(0),
+                retag.get("skipped").and_then(|v| v.as_u64()).unwrap_or(0),
+                retag.get("errors").and_then(|v| v.as_u64()).unwrap_or(0)
+            ));
+        }
+    }
     if let Some(error) = p["plex_playlist_error"].as_str() {
         lines.push(String::new());
         lines.push(format!("Plex playlist update failed: {error}"));

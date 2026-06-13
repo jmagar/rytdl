@@ -111,6 +111,23 @@ impl Urls {
     }
 }
 
+/// Accept either a single local file path string or a list of paths.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Paths {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Paths {
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            Paths::One(s) => vec![s],
+            Paths::Many(v) => v,
+        }
+    }
+}
+
 fn default_audio_quality() -> String {
     "0".into()
 }
@@ -163,6 +180,19 @@ pub struct DownloadInput {
 pub struct ProbeInput {
     /// One or more video URLs. A single URL string is accepted.
     pub urls: Urls,
+    /// 'markdown' (human-readable) or 'json' (machine-readable).
+    #[serde(default)]
+    pub response_format: ResponseFormat,
+}
+
+/// Input for `youtube_identify`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct IdentifyInput {
+    /// One or more local audio file paths to fingerprint and identify.
+    pub paths: Paths,
+    /// Write high-confidence MusicBrainz retag previews back to the files.
+    #[serde(default)]
+    pub write_tags: bool,
     /// 'markdown' (human-readable) or 'json' (machine-readable).
     #[serde(default)]
     pub response_format: ResponseFormat,

@@ -42,6 +42,13 @@ jobs:
       - name: Validate plugin packaging
         run: REQUIRE_SHELLCHECK=1 scripts/check-packaging.sh
 
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build container image
+        run: docker build -t ytdl-mcp:ci .
+
   cross-build:
     # Smoke-build the Windows target so cross-compile breakage is caught in CI,
     # not at release time.

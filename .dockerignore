@@ -1,0 +1,20 @@
+# Git / editor state
+.git
+.gitignore
+.worktrees
+.full-review
+.DS_Store
+.idea
+.vscode
+
+# Rust build output
+target
+.xwin-cache
+
+# Local scratch / partial downloads
+*.part
+*.ytdl
+
+# Session artifacts and screenshots are not needed to build the binary.
+docs/sessions
+docs/superpowers/artifacts

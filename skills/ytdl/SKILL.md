@@ -80,6 +80,16 @@ Check a target before a big download:
 youtube_probe(urls="https://...")
 ```
 
+Identify a local audio file against AcoustID/MusicBrainz:
+
+```
+youtube_identify(paths="/path/to/song.mp3", response_format="json")
+```
+
+High-confidence matches include a read-only `retag_preview` with canonical
+MusicBrainz artist/title/release/date/type/track metadata and MBIDs.
+Set `write_tags=true` to write that high-confidence preview back to the file.
+
 Review download totals and recent entries:
 
 ```
@@ -104,6 +114,9 @@ the ledger append fails, with `history_error` included in JSON output.
 - Embedded title metadata strips common YouTube noise such as `(Official Video)`,
   `[Official Audio]`, trailing `| @channel`, and extra whitespace by default.
   Set `YTDLP_CLEAN_METADATA=0` to preserve source titles exactly.
+- `youtube_identify` requires `YTDLP_ACOUSTID_CLIENT_KEY` and `fpcalc`
+  (Chromaprint) on `PATH`, or an explicit `FPCALC_PATH`. It previews by default;
+  pass `write_tags=true` to write high-confidence MusicBrainz tags to files.
 - Set `YTDLP_PLEX_URL` and `YTDLP_PLEX_TOKEN` to add downloaded audio tracks to
   the `yt-dlp Downloads` Plex playlist by default. Set `YTDLP_PLEX_PLAYLIST` or
   pass per-call `plex_playlist` to override it. Plex playlist failures are

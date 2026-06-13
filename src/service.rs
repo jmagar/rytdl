@@ -4,12 +4,17 @@
 mod format;
 
 use anyhow::{bail, Result};
+use serde_json::json;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use crate::bootstrap;
 use crate::config::Config;
 use crate::downloader::{self, FetchOptions, ItemResult};
-use crate::model::{DownloadInput, ProbeInput, SearchInput, SearchPayload, StatsInput};
+use crate::identify::IdentifyPayload;
+use crate::model::{
+    DownloadInput, IdentifyInput, ProbeInput, SearchInput, SearchPayload, StatsInput,
+};
 use crate::urls::strip_mix_params;
 
 use format::{
@@ -130,6 +135,8 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         .map(|(kind, dest)| (*kind, dest.as_str()))
         .collect();
 
+    let metadata_retag = auto_retag_audio(cfg, &results).await;
+
     // Transfer each kind to its own destination.
     let mut transfer_error: Option<String> = None;
     for (kind, dest) in &transfer_dests {
@@ -173,6 +180,9 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         transfer_error.clone(),
         staging_kept.as_deref(),
     );
+    if let Some(summary) = metadata_retag {
+        payload["metadata_retag"] = summary;
+    }
     if transferred {
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
     }
@@ -192,6 +202,104 @@ async fn transfer_kind(
 ) -> Result<()> {
     crate::transfer::ensure_remote_dir(remote, dest, ssh_opts).await?;
     crate::transfer::transfer(dir, remote, dest, ssh_opts).await
+}
+
+async fn auto_retag_audio(cfg: &Config, results: &[ItemResult]) -> Option<serde_json::Value> {
+    let paths = downloaded_audio_paths(results);
+    auto_retag_audio_paths(cfg, paths, |cfg, paths| async move {
+        crate::identify::identify_files(&cfg, paths, true).await
+    })
+    .await
+}
+
+fn downloaded_audio_paths(results: &[ItemResult]) -> Vec<String> {
+    results
+        .iter()
+        .flat_map(|result| &result.files)
+        .filter(|file| file.kind == "audio")
+        .map(|file| file.path.display().to_string())
+        .collect()
+}
+
+async fn auto_retag_audio_paths<F, Fut>(
+    cfg: &Config,
+    paths: Vec<String>,
+    identify: F,
+) -> Option<serde_json::Value>
+where
+    F: FnOnce(Config, Vec<String>) -> Fut,
+    Fut: Future<Output = Result<IdentifyPayload>>,
+{
+    if paths.is_empty()
+        || cfg
+            .acoustid_client_key
+            .as_deref()
+            .filter(|key| !key.trim().is_empty())
+            .is_none()
+    {
+        return None;
+    }
+
+    let attempted = paths.len();
+    match identify(cfg.clone(), paths).await {
+        Ok(payload) => Some(auto_retag_summary(&payload, attempted)),
+        Err(error) => Some(json!({
+            "attempted": attempted,
+            "matched": 0,
+            "written": 0,
+            "errors": 1,
+            "error": error.to_string(),
+        })),
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn auto_retag_audio_paths_for_test<F, Fut>(
+    cfg: &Config,
+    paths: Vec<String>,
+    identify: F,
+) -> Option<serde_json::Value>
+where
+    F: FnOnce(Config, Vec<String>) -> Fut,
+    Fut: Future<Output = Result<IdentifyPayload>>,
+{
+    auto_retag_audio_paths(cfg, paths, identify).await
+}
+
+fn auto_retag_summary(payload: &IdentifyPayload, attempted: usize) -> serde_json::Value {
+    let matched = payload
+        .results
+        .iter()
+        .filter(|result| result.retag_preview.is_some())
+        .count();
+    let written = payload
+        .results
+        .iter()
+        .filter(|result| {
+            result
+                .tag_write
+                .as_ref()
+                .map(|write| write.written)
+                .unwrap_or(false)
+        })
+        .count();
+    let errors = payload
+        .results
+        .iter()
+        .filter(|result| {
+            result.error.is_some()
+                || result.retag_preview_error.is_some()
+                || result.tag_write_error.is_some()
+        })
+        .count();
+
+    json!({
+        "attempted": attempted,
+        "matched": matched,
+        "written": written,
+        "skipped": attempted.saturating_sub(matched),
+        "errors": errors,
+    })
 }
 
 /// Resolve/install yt-dlp + ffmpeg off the async runtime (blocking network I/O).
@@ -226,6 +334,16 @@ pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
         &payload,
         input.response_format,
         render_probe_markdown,
+    ))
+}
+
+pub async fn run_identify(cfg: &Config, input: IdentifyInput) -> Result<String> {
+    let payload =
+        crate::identify::identify_files(cfg, input.paths.into_vec(), input.write_tags).await?;
+    Ok(render(
+        &serde_json::to_value(&payload)?,
+        input.response_format,
+        crate::identify::render_identify_markdown,
     ))
 }
 
@@ -314,3 +432,11 @@ pub fn run_stats(cfg: &Config, input: StatsInput) -> Result<String> {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service/stats_identify_tests.rs"]
+mod stats_identify_tests;
+
+#[cfg(test)]
+#[path = "service/render_tests.rs"]
+mod render_tests;

@@ -89,7 +89,7 @@ if [ -n "$duplicate_gemini_env" ]; then
   fail "gemini-extension.json has duplicate envVar entries: ${duplicate_gemini_env//$'\n'/, }"
 fi
 
-invalid_gemini_env="$(awk '!/^(YTDLP_|FFMPEG_)/ { print }' "$tmp_dir/gemini_env_vars")"
+invalid_gemini_env="$(awk '!/^(YTDLP_|FFMPEG_|FPCALC_PATH$)/ { print }' "$tmp_dir/gemini_env_vars")"
 if [ -n "$invalid_gemini_env" ]; then
   fail "gemini-extension.json has unexpected envVar names: ${invalid_gemini_env//$'\n'/, }"
 fi

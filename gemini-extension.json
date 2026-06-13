@@ -1,6 +1,6 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "mcpServers": {
     "ytdl-mcp": {
@@ -60,6 +60,21 @@
       "description": "Strip common YouTube title noise before embedding metadata. Default: true.",
       "envVar": "YTDLP_CLEAN_METADATA",
       "default": "true"
+    },
+    {
+      "name": "AcoustID client key",
+      "description": "Application API key for AcoustID lookups used by youtube_identify.",
+      "envVar": "YTDLP_ACOUSTID_CLIENT_KEY"
+    },
+    {
+      "name": "fpcalc path",
+      "description": "Optional path to the Chromaprint fpcalc executable. Blank = search PATH.",
+      "envVar": "FPCALC_PATH"
+    },
+    {
+      "name": "MusicBrainz contact",
+      "description": "Contact URL or email included in the lookup User-Agent.",
+      "envVar": "YTDLP_MUSICBRAINZ_CONTACT"
     },
     {
       "name": "yt-dlp extractor args",
