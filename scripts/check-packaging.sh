@@ -133,3 +133,14 @@ if [ -n "$drift_mcpb_keys" ]; then
   fail "mcpb/manifest.json user_config keys differ from plugin.json userConfig keys: ${drift_mcpb_keys//$'\n'/, }"
 fi
 log "MCP bundle manifest mapping ok"
+
+release_workflow=".github/workflows/release.yml"
+[ -f "$release_workflow" ] || fail "missing $release_workflow"
+grep -q 'branches: \["main"\]' "$release_workflow" \
+  || fail "release workflow must run on pushes to main"
+grep -q 'GITHUB_RUN_NUMBER' "$release_workflow" \
+  || fail "main release tags must be unique per workflow run"
+release_tag_expression="$(printf '%s%s' '$' '{{ needs.release-meta.outputs.tag_name }}')"
+grep -Fq "tag_name: $release_tag_expression" "$release_workflow" \
+  || fail "release uploads must use the computed release tag"
+log "release workflow trigger ok"

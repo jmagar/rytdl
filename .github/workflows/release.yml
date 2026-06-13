@@ -1,8 +1,11 @@
 name: release
 
-# Build the cross-platform binaries and attach them to a GitHub Release on tag.
+# Build the cross-platform binaries and attach them to a GitHub Release.
+# A push to main cuts a unique release automatically; tag pushes keep the
+# stable-version release path available.
 on:
   push:
+    branches: ["main"]
     tags: ["v*"]
   workflow_dispatch:
 
@@ -10,7 +13,39 @@ permissions:
   contents: write
 
 jobs:
+  release-meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        name: Resolve release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+            release_name="ytdl-mcp ${tag}"
+          else
+            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
+            if [[ -z "$version" ]]; then
+              echo "::error::could not read package version from Cargo.toml"
+              exit 1
+            fi
+            short_sha="$(git rev-parse --short=12 HEAD)"
+            tag="v${version}-main.${GITHUB_RUN_NUMBER}.${short_sha}"
+            release_name="ytdl-mcp ${version} (${short_sha})"
+          fi
+          echo "tag_name=${tag}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
+
   packaging:
+    needs: release-meta
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,7 +57,7 @@ jobs:
         run: REQUIRE_SHELLCHECK=1 scripts/check-packaging.sh
 
   build:
-    needs: packaging
+    needs: [release-meta, packaging]
     strategy:
       matrix:
         include:
@@ -70,24 +105,18 @@ jobs:
           cp "target/${{ matrix.target }}/release/ytdl-mcp${{ matrix.ext }}" "${{ matrix.artifact }}"
           sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ${{ matrix.artifact }}
-            ${{ matrix.artifact }}.sha256
-
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          path: |
+            ${{ matrix.artifact }}
+            ${{ matrix.artifact }}.sha256
 
   mcpb:
     # Bundle the linux + windows binaries into a single .mcpb (MCP bundle) for
     # one-click install in MCPB-capable desktop hosts.
-    needs: build
+    needs: [release-meta, build]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -111,19 +140,31 @@ jobs:
           OUT: ytdl-mcp.mcpb
         run: scripts/build-mcpb.sh
 
-      - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            ytdl-mcp.mcpb
-            ytdl-mcp.mcpb.sha256
-
       - name: Upload as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: ytdl-mcp.mcpb
-          path: ytdl-mcp.mcpb
+          path: |
+            ytdl-mcp.mcpb
+            ytdl-mcp.mcpb.sha256
+
+  publish-release:
+    needs: [release-meta, build, mcpb]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release-assets
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-meta.outputs.tag_name }}
+          name: ${{ needs.release-meta.outputs.release_name }}
+          target_commitish: ${{ github.sha }}
+          files: dist/release-assets/*
 
   test:
     runs-on: ubuntu-latest
