@@ -189,7 +189,7 @@ async fn fingerprint_file(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn()?;
+    let mut child = spawn_with_retry(&mut cmd).await?;
     let mut stdout = child.stdout.take().expect("stdout piped");
     let mut stderr = child.stderr.take().expect("stderr piped");
 
@@ -220,6 +220,24 @@ async fn fingerprint_file(
         bail!("{}", String::from_utf8_lossy(&stderr).trim());
     }
     parsed
+}
+
+async fn spawn_with_retry(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    let mut attempts = 0;
+    loop {
+        match cmd.spawn() {
+            Ok(child) => return Ok(child),
+            Err(error) if is_executable_busy(&error) && attempts < 5 => {
+                attempts += 1;
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+fn is_executable_busy(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(26)
 }
 
 pub(crate) fn parse_fpcalc_output(bytes: &[u8]) -> Result<Fingerprint> {

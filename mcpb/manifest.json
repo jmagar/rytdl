@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "ytdl-mcp",
   "display_name": "yt-dlp Downloader",
-  "version": "0.5.0",
+  "version": "0.7.0",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "long_description": "Cross-platform single-binary MCP server. Downloads media with yt-dlp, embeds metadata and cover art, organizes by artist, and rsync/scp's the result to an SSH remote. yt-dlp and ffmpeg are auto-downloaded into a per-user cache on first run, so the bundle only ships the ytdl-mcp binary itself.",
   "author": {
@@ -38,6 +38,10 @@
         "YTDLP_PLEX_URL": "${user_config.plex_url}",
         "YTDLP_PLEX_TOKEN": "${user_config.plex_token}",
         "YTDLP_PLEX_PLAYLIST": "${user_config.plex_playlist}",
+        "YTDLP_CLEAN_METADATA": "${user_config.clean_metadata}",
+        "YTDLP_ACOUSTID_CLIENT_KEY": "${user_config.acoustid_client_key}",
+        "FPCALC_PATH": "${user_config.fpcalc_path}",
+        "YTDLP_MUSICBRAINZ_CONTACT": "${user_config.musicbrainz_contact}",
         "YTDLP_AUTO_UPDATE": "${user_config.auto_update}",
         "YTDLP_MAX_AGE_DAYS": "${user_config.max_age_days}",
         "YTDLP_UPDATE_PRE": "${user_config.update_pre}",
@@ -144,6 +148,31 @@
       "type": "string",
       "title": "Plex playlist",
       "description": "Optional default Plex playlist title or ID to add downloaded audio tracks to. Can be overridden per youtube_download call.",
+      "required": false
+    },
+    "clean_metadata": {
+      "type": "boolean",
+      "title": "Clean title metadata",
+      "description": "Strip common YouTube title noise such as '(Official Video)', '[Official Audio]', trailing channel handles, and extra whitespace before embedding metadata.",
+      "default": true
+    },
+    "acoustid_client_key": {
+      "type": "string",
+      "title": "AcoustID client key",
+      "description": "Application API key for AcoustID lookups used by youtube_identify and automatic high-confidence download retagging.",
+      "required": false,
+      "sensitive": true
+    },
+    "fpcalc_path": {
+      "type": "string",
+      "title": "fpcalc path",
+      "description": "Optional path to the Chromaprint fpcalc executable. If blank, youtube_identify searches PATH.",
+      "required": false
+    },
+    "musicbrainz_contact": {
+      "type": "string",
+      "title": "MusicBrainz contact",
+      "description": "Contact URL or email included in the User-Agent for metadata lookup requests.",
       "required": false
     },
     "auto_update": {

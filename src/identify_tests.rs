@@ -67,7 +67,7 @@ async fn identify_file_runs_fpcalc_and_looks_up_candidates() {
     .await;
 
     assert_eq!(result.path, audio.display().to_string());
-    assert!(result.error.is_none());
+    assert!(result.error.is_none(), "{:?}", result.error);
     assert_eq!(result.duration, Some(185));
     assert_eq!(result.candidates.len(), 1);
     assert_eq!(lookup.seen.len(), 1);
