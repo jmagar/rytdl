@@ -201,8 +201,13 @@
     // surfacing the raw JSON envelope.
     function friendlyError(message) {
       const text = String(message || "");
-      if (/hidden while code[_ ]?mode/i.test(text)) {
-        return "This panel can't reach its YouTube tools while the MCP host is in code mode. Disable code mode on the host to probe, download, or re-search from here.";
+      // The lab proxy hides regular tools in "code mode" and rejects widget
+      // callbacks to them. Depending on the host transport that surfaces either
+      // as a JSON envelope mentioning code mode, or as a bare streamable-HTTP
+      // "tools/call failed: 404" (a hidden tool is not found on the direct surface).
+      if (/hidden while code[_ ]?mode/i.test(text) ||
+          /tools\/call failed:\s*404/i.test(text)) {
+        return "This panel can't reach its YouTube tools because the MCP host is in code mode, which hides download/probe/search from direct calls. Enable widget tool callbacks on the host, or disable code mode, to probe, download, or re-search from here.";
       }
       try {
         const inner = JSON.parse(text)?.error?.message;
@@ -251,7 +256,11 @@
     }
 
     app.ontoolinput = (params) => {
-      if (params?.query) queryEl.value = params.query;
+      // The host delivers the originating tool call via ui/notifications/tool-input,
+      // which nests the call arguments under `arguments` ({ arguments: { query } }).
+      // Fall back to a flat shape in case a host passes the args directly.
+      const query = params?.arguments?.query ?? params?.query;
+      if (query) queryEl.value = query;
     };
 
     app.ontoolresult = (result) => {

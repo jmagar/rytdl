@@ -23,6 +23,14 @@ fn app_resource_contains_html_and_aurora_hooks() {
     assert!(text.contains("--aurora-page-bg"));
     assert!(text.contains("callServerTool"));
     assert!(text.contains("window.McpExtApps"));
+    // The originating query arrives nested under `arguments` in the tool-input
+    // notification; seeding the search box from a flat `params.query` leaves it
+    // blank. Guard against regressing back to the shallow access.
+    assert!(text.contains("params?.arguments?.query"));
+    // Code-mode hosts reject widget callbacks to hidden tools; depending on the
+    // transport that surfaces as a bare "tools/call failed: 404". friendlyError
+    // must translate it into an actionable message instead of a raw 404.
+    assert!(text.contains("tools/call failed:"));
     assert!(!text.contains("{{MCP_EXT_APPS_BUNDLE}}"));
     assert!(!text.contains("https://esm.sh"));
     let ui = meta.as_ref().unwrap().0.get("ui").unwrap();
