@@ -8,7 +8,6 @@ use serde_json::Value;
 use url::Url;
 
 use crate::config::Config;
-use crate::downloader::ItemResult;
 
 const TRACK_TYPE: &str = "10";
 
@@ -29,6 +28,20 @@ pub struct PlexMissingTrack {
     pub uploader: Option<String>,
 }
 
+/// Plex-owned input DTO: one resolved audio track that the caller wants linked
+/// into a playlist. This decouples the Plex integration from the downloader's
+/// internal result model — `service.rs` maps `&[ItemResult]` into these before
+/// calling [`add_downloaded_audio`], so a change to `downloader::ItemResult`'s
+/// shape no longer ripples into this leaf integration.
+///
+/// Carries only what Plex needs to match a library track: the display `title`
+/// and an optional `uploader` (matched against the track/album artist).
+#[derive(Debug, Clone)]
+pub struct PlexTrackInput {
+    pub title: String,
+    pub uploader: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 struct TrackCandidate {
     title: String,
@@ -38,9 +51,9 @@ struct TrackCandidate {
 pub fn add_downloaded_audio(
     cfg: &Config,
     playlist: &str,
-    results: &[ItemResult],
+    tracks: &[PlexTrackInput],
 ) -> Result<PlexPlaylistUpdate> {
-    let tracks = audio_tracks(results);
+    let tracks = dedup_tracks(tracks);
     if tracks.is_empty() {
         return Ok(PlexPlaylistUpdate {
             playlist: playlist.to_string(),
@@ -74,9 +87,9 @@ pub fn add_downloaded_audio(
 fn add_downloaded_audio_with_transport(
     transport: &mut impl PlexTransport,
     playlist: &str,
-    results: &[ItemResult],
+    tracks: &[PlexTrackInput],
 ) -> Result<PlexPlaylistUpdate> {
-    let tracks = audio_tracks(results);
+    let tracks = dedup_tracks(tracks);
     add_audio_tracks_with_transport(transport, playlist, tracks)
 }
 
@@ -100,11 +113,7 @@ fn add_audio_tracks_with_transport(
     }
 
     let machine_id = machine_identifier(transport)?;
-    let mut playlist_id = find_playlist_id(transport, playlist)?;
-    let mut existing = match playlist_id.as_deref() {
-        Some(id) => playlist_item_keys(transport, id)?,
-        None => BTreeSet::new(),
-    };
+    let mut state = PlaylistState::resolve(transport, playlist)?;
 
     for track in tracks {
         let Some(rating_key) = find_track_rating_key(transport, &track)? else {
@@ -116,63 +125,96 @@ fn add_audio_tracks_with_transport(
         };
         update.matched += 1;
 
-        if playlist_id.is_none() {
-            let id = create_playlist(transport, playlist, &machine_id, &rating_key)?;
-            existing.insert(rating_key.clone());
-            playlist_id = Some(id);
-            update.added += 1;
-            continue;
-        }
-
-        if existing.contains(&rating_key) {
+        if state.contains(&rating_key) {
             update.already_present += 1;
             continue;
         }
 
-        if let Some(id) = playlist_id.as_deref() {
-            add_item_to_playlist(transport, id, &machine_id, &rating_key)?;
-            existing.insert(rating_key);
-            update.added += 1;
-        }
+        state.add_track(transport, playlist, &machine_id, &rating_key)?;
+        update.added += 1;
     }
 
-    update.playlist_id = playlist_id;
+    update.playlist_id = state.into_id();
     Ok(update)
 }
 
-fn audio_tracks(results: &[ItemResult]) -> Vec<TrackCandidate> {
-    let mut tracks = Vec::new();
-    let mut seen = BTreeSet::new();
-    for result in results {
-        for file in &result.files {
-            if file.kind != "audio" {
-                continue;
-            }
-            let title = file
-                .title
-                .as_deref()
-                .or(result.title.as_deref())
-                .or_else(|| file.path.file_stem().and_then(|s| s.to_str()))
-                .unwrap_or("")
-                .trim();
-            if title.is_empty() {
-                continue;
-            }
-            let uploader = file.uploader.clone().or_else(|| result.uploader.clone());
-            let key = format!(
-                "{}\u{1f}{}",
-                title.to_ascii_lowercase(),
-                uploader.as_deref().unwrap_or("").to_ascii_lowercase()
-            );
-            if seen.insert(key) {
-                tracks.push(TrackCandidate {
-                    title: title.to_string(),
-                    uploader,
-                });
+/// Tracks whether the target playlist exists yet and which items it already
+/// holds, so the add loop can stay a flat match -> skip-if-present -> add.
+///
+/// The playlist is created lazily: until the first track matches there may be
+/// nothing to create the playlist from, so `add_track` creates it on the first
+/// added item and appends to it thereafter. `existing` is seeded from the live
+/// playlist (when one already exists) and updated as items are added so a
+/// duplicate within the same batch is treated as already-present.
+struct PlaylistState {
+    id: Option<String>,
+    existing: BTreeSet<String>,
+}
+
+impl PlaylistState {
+    fn resolve(transport: &mut impl PlexTransport, playlist: &str) -> Result<Self> {
+        let id = find_playlist_id(transport, playlist)?;
+        let existing = match id.as_deref() {
+            Some(id) => playlist_item_keys(transport, id)?,
+            None => BTreeSet::new(),
+        };
+        Ok(Self { id, existing })
+    }
+
+    fn contains(&self, rating_key: &str) -> bool {
+        self.existing.contains(rating_key)
+    }
+
+    /// Add `rating_key` to the playlist, creating the playlist first if it does
+    /// not exist yet. Records the key as present on success.
+    fn add_track(
+        &mut self,
+        transport: &mut impl PlexTransport,
+        playlist: &str,
+        machine_id: &str,
+        rating_key: &str,
+    ) -> Result<()> {
+        match self.id.as_deref() {
+            Some(id) => add_item_to_playlist(transport, id, machine_id, rating_key)?,
+            None => {
+                let id = create_playlist(transport, playlist, machine_id, rating_key)?;
+                self.id = Some(id);
             }
         }
+        self.existing.insert(rating_key.to_string());
+        Ok(())
     }
-    tracks
+
+    fn into_id(self) -> Option<String> {
+        self.id
+    }
+}
+
+/// Collapse the caller's resolved track inputs into the internal candidate list,
+/// dropping empty titles and de-duplicating on a case-insensitive
+/// (title, uploader) key while preserving first-seen order.
+fn dedup_tracks(tracks: &[PlexTrackInput]) -> Vec<TrackCandidate> {
+    let mut candidates = Vec::new();
+    let mut seen = BTreeSet::new();
+    for track in tracks {
+        let title = track.title.trim();
+        if title.is_empty() {
+            continue;
+        }
+        let uploader = track.uploader.clone();
+        let key = format!(
+            "{}\u{1f}{}",
+            title.to_ascii_lowercase(),
+            uploader.as_deref().unwrap_or("").to_ascii_lowercase()
+        );
+        if seen.insert(key) {
+            candidates.push(TrackCandidate {
+                title: title.to_string(),
+                uploader,
+            });
+        }
+    }
+    candidates
 }
 
 fn machine_identifier(transport: &mut impl PlexTransport) -> Result<String> {
@@ -213,6 +255,33 @@ fn playlist_item_keys(
         .collect())
 }
 
+/// Resolve a downloaded track to a Plex library `ratingKey` via the search API.
+///
+/// Match criteria, in priority order:
+///
+/// 1. **Exact match** — a search hit whose `title` matches the candidate title
+///    (case-insensitive) AND, when the candidate has an uploader, whose track
+///    artist matches that uploader (case-insensitive). Artist is read from
+///    `grandparentTitle` (Plex's track/album artist) and `parentTitle` (the
+///    album); a hit on either counts. When the candidate has no uploader, the
+///    title match alone qualifies. The first exact match wins.
+///
+///    `originalTitle` is intentionally NOT consulted for artist matching: in
+///    Plex it is the track-level *original title* (an alternate name for the
+///    track), not an artist field, so matching an uploader against it produces
+///    semantically wrong links and false positives.
+///
+/// 2. **Single-candidate fallback** — if no exact match is found but the search
+///    returned exactly one track, return that track. The trade-off: a single
+///    hit is very likely the right one (e.g. an artist named slightly
+///    differently than the uploader, or a title with extra punctuation), so
+///    linking it is usually correct and avoids spurious "missing" reports. When
+///    the search returns multiple non-matching candidates we prefer NO match
+///    over arbitrarily linking the first one, since picking among ambiguous
+///    hits risks attaching the wrong track to the playlist.
+///
+/// Returns `Ok(None)` when nothing qualifies; the caller records the track as
+/// missing rather than guessing.
 fn find_track_rating_key(
     transport: &mut impl PlexTransport,
     track: &TrackCandidate,
@@ -221,18 +290,22 @@ fn find_track_rating_key(
         "/search",
         &[("query", track.title.as_str()), ("type", TRACK_TYPE)],
     )?;
-    let mut fallback = None;
+    let mut sole_candidate: Option<String> = None;
+    let mut candidate_count = 0usize;
     for item in metadata_items(&value) {
         let Some(rating_key) = item.get("ratingKey").and_then(Value::as_str) else {
             continue;
         };
-        fallback.get_or_insert_with(|| rating_key.to_string());
+        candidate_count += 1;
+        if candidate_count == 1 {
+            sole_candidate = Some(rating_key.to_string());
+        }
         let title_matches = item
             .get("title")
             .and_then(Value::as_str)
             .is_some_and(|title| title.eq_ignore_ascii_case(&track.title));
         let uploader_matches = match track.uploader.as_deref() {
-            Some(uploader) => ["grandparentTitle", "parentTitle", "originalTitle"]
+            Some(uploader) => ["grandparentTitle", "parentTitle"]
                 .iter()
                 .filter_map(|field| item.get(*field).and_then(Value::as_str))
                 .any(|artist| artist.eq_ignore_ascii_case(uploader)),
@@ -242,7 +315,13 @@ fn find_track_rating_key(
             return Ok(Some(rating_key.to_string()));
         }
     }
-    Ok(fallback)
+    // No exact match: only fall back when the result set is unambiguous (a
+    // single candidate). Otherwise prefer no match over a possibly-wrong link.
+    if candidate_count == 1 {
+        Ok(sole_candidate)
+    } else {
+        Ok(None)
+    }
 }
 
 fn create_playlist(
@@ -293,6 +372,39 @@ fn metadata_items(value: &Value) -> impl Iterator<Item = &Value> {
         .flatten()
 }
 
+/// Build a token-free display form of a Plex request URL for error/log use.
+///
+/// The live request URL carries the `X-Plex-Token` query parameter (the Plex
+/// auth secret). That value must never reach an error chain or the tracing
+/// output, because Plex errors are surfaced to the MCP client (as
+/// `plex_playlist_error`) and logged to stderr. This rebuilds the URL with the
+/// token value replaced by `REDACTED` while leaving the path and the
+/// non-sensitive query params intact for debugging.
+fn redact_url(url: &Url) -> String {
+    let mut redacted = url.clone();
+    let pairs: Vec<(String, String)> = url
+        .query_pairs()
+        .map(|(key, value)| {
+            if key == "X-Plex-Token" {
+                (key.into_owned(), "REDACTED".to_string())
+            } else {
+                (key.into_owned(), value.into_owned())
+            }
+        })
+        .collect();
+    {
+        let mut serializer = redacted.query_pairs_mut();
+        serializer.clear();
+        for (key, value) in &pairs {
+            serializer.append_pair(key, value);
+        }
+    }
+    if pairs.is_empty() {
+        redacted.set_query(None);
+    }
+    redacted.to_string()
+}
+
 trait PlexTransport {
     fn get(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value>;
     fn post(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value>;
@@ -334,7 +446,7 @@ impl PlexTransport for UreqPlexTransport {
         let response = ureq::get(url.as_str())
             .header("Accept", "application/json")
             .call()
-            .with_context(|| format!("GET {url}"))?;
+            .with_context(|| format!("GET {}", redact_url(&url)))?;
         self.read_json(response)
     }
 
@@ -343,7 +455,7 @@ impl PlexTransport for UreqPlexTransport {
         let response = ureq::post(url.as_str())
             .header("Accept", "application/json")
             .send_empty()
-            .with_context(|| format!("POST {url}"))?;
+            .with_context(|| format!("POST {}", redact_url(&url)))?;
         self.read_json(response)
     }
 
@@ -352,7 +464,7 @@ impl PlexTransport for UreqPlexTransport {
         let response = ureq::put(url.as_str())
             .header("Accept", "application/json")
             .send_empty()
-            .with_context(|| format!("PUT {url}"))?;
+            .with_context(|| format!("PUT {}", redact_url(&url)))?;
         if !response.status().is_success() {
             bail!("Plex returned HTTP {}", response.status());
         }

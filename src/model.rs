@@ -94,38 +94,72 @@ pub enum ResponseFormat {
     Json,
 }
 
-/// Accept either a single URL string or a list of URL strings.
+/// Accept either a single string or a list of strings. Shared shape behind both
+/// [`Urls`] and [`Paths`] (they were byte-identical enums; BP-M5).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
-pub enum Urls {
+pub enum OneOrMany {
     One(String),
     Many(Vec<String>),
 }
 
-impl Urls {
+impl OneOrMany {
     pub fn into_vec(self) -> Vec<String> {
         match self {
-            Urls::One(s) => vec![s],
-            Urls::Many(v) => v,
+            OneOrMany::One(s) => vec![s],
+            OneOrMany::Many(v) => v,
         }
     }
 }
+
+/// Accept either a single URL string or a list of URL strings.
+pub type Urls = OneOrMany;
 
 /// Accept either a single local file path string or a list of paths.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum Paths {
-    One(String),
-    Many(Vec<String>),
+pub type Paths = OneOrMany;
+
+impl Urls {
+    /// Validate that every entry is a well-formed `http`/`https` URL before it
+    /// reaches the yt-dlp subprocess. Defense-in-depth backstop for the `--`
+    /// end-of-options guard at the call sites (F2): rejects values such as
+    /// `--exec=...`, `-o /path`, or non-http(s) schemes that yt-dlp would
+    /// otherwise interpret as flags or unexpected inputs.
+    ///
+    /// NOTE: this is `into_vec` plus validation under a distinct name so it can
+    /// be wired in without touching the existing `into_vec` callers. service.rs
+    /// must call this in place of `into_vec` to enforce the backstop.
+    pub fn into_validated_vec(self) -> anyhow::Result<Vec<String>> {
+        let urls = self.into_vec();
+        for url in &urls {
+            validate_http_url(url)?;
+        }
+        Ok(urls)
+    }
 }
 
-impl Paths {
-    pub fn into_vec(self) -> Vec<String> {
-        match self {
-            Paths::One(s) => vec![s],
-            Paths::Many(v) => v,
+/// Reject anything that is not an `http`/`https` URL with a clear error.
+fn validate_http_url(value: &str) -> anyhow::Result<()> {
+    let trimmed = value.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        // Require a non-empty host component after the scheme separator.
+        let rest = trimmed
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| !matches!(c, '/' | '?' | '#'))
+        {
+            return Ok(());
         }
     }
+    anyhow::bail!(
+        "invalid URL {value:?}: only http:// and https:// URLs are accepted \
+         (a leading '-' or other scheme is rejected to prevent it being parsed \
+         as a yt-dlp option)"
+    )
 }
 
 fn default_audio_quality() -> String {
@@ -202,6 +236,10 @@ fn default_search_limit() -> u32 {
     10
 }
 
+/// Upper bound on `youtube_search` results. Single source of truth shared with
+/// `downloader::search_spec` (L5).
+pub const MAX_SEARCH_LIMIT: u32 = 25;
+
 /// Input for `youtube_search` and `youtube_search_ui`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SearchInput {
@@ -217,7 +255,7 @@ pub struct SearchInput {
 
 impl SearchInput {
     pub fn effective_limit(&self) -> u32 {
-        self.limit.clamp(1, 25)
+        self.limit.clamp(1, MAX_SEARCH_LIMIT)
     }
 }
 

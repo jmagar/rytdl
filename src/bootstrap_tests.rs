@@ -83,6 +83,86 @@ fn verify_sha256_rejects_mismatched_digest() {
 }
 
 #[test]
+fn verify_pin_is_noop_when_unset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool");
+    std::fs::write(&path, b"known bytes").unwrap();
+
+    // No pin configured -> always Ok, file untouched.
+    verify_pin(&path, None, "tool").unwrap();
+    assert!(path.is_file());
+}
+
+#[test]
+fn verify_pin_accepts_matching_digest_and_keeps_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool");
+    std::fs::write(&path, b"known bytes").unwrap();
+
+    verify_pin(
+        &path,
+        Some("25cb6d61356e5cada4238d160f3a77522e550e27a69758da40cd281c7ef2c8dc"),
+        "tool",
+    )
+    .unwrap();
+    assert!(path.is_file(), "matching pin must leave the file in place");
+}
+
+#[test]
+fn verify_pin_rejects_mismatch_but_keeps_file() {
+    // The non-destructive variant (override/PATH binaries) must not delete the
+    // user's file.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool");
+    std::fs::write(&path, b"known bytes").unwrap();
+
+    let err = verify_pin(
+        &path,
+        Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        "tool",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("tool checksum mismatch"));
+    assert!(
+        path.exists(),
+        "verify_pin must not delete user-supplied files"
+    );
+}
+
+#[test]
+fn verify_pin_cached_rejects_mismatch_and_removes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool");
+    std::fs::write(&path, b"known bytes").unwrap();
+
+    let err = verify_pin_cached(
+        &path,
+        Some("0000000000000000000000000000000000000000000000000000000000000000"),
+        "tool",
+    )
+    .unwrap_err()
+    .to_string();
+
+    assert!(err.contains("tool checksum mismatch"));
+    assert!(
+        !path.exists(),
+        "a cached pin mismatch must delete the offending file so it isn't trusted next run",
+    );
+}
+
+#[test]
+fn verify_pin_cached_is_noop_when_unset() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tool");
+    std::fs::write(&path, b"known bytes").unwrap();
+
+    verify_pin_cached(&path, None, "tool").unwrap();
+    assert!(path.is_file());
+}
+
+#[test]
 fn ensure_ytdlp_enforces_sha256_pin_for_override() {
     let dir = tempfile::tempdir().unwrap();
     let ytdlp = dir.path().join(exe_name("yt-dlp"));

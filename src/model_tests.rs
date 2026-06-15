@@ -31,6 +31,49 @@ fn urls_accepts_single_string_or_array() {
 }
 
 #[test]
+fn urls_into_validated_vec_accepts_http_and_https() {
+    let one: Urls = serde_json::from_str(r#""https://www.youtube.com/watch?v=1""#).unwrap();
+    assert_eq!(
+        one.into_validated_vec().unwrap(),
+        vec!["https://www.youtube.com/watch?v=1"]
+    );
+
+    let many: Urls =
+        serde_json::from_str(r#"["http://example.com/a","https://example.com/b"]"#).unwrap();
+    assert_eq!(
+        many.into_validated_vec().unwrap(),
+        vec!["http://example.com/a", "https://example.com/b"]
+    );
+}
+
+#[test]
+fn urls_into_validated_vec_rejects_non_http_and_flaglike_values() {
+    // A value that yt-dlp would otherwise parse as a flag (argument injection).
+    let exec: Urls = serde_json::from_str(r#""--exec=touch /tmp/pwned""#).unwrap();
+    let err = exec.into_validated_vec().unwrap_err().to_string();
+    assert!(err.contains("only http:// and https://"));
+
+    // Non-http(s) schemes are rejected too.
+    assert!(Urls::One("file:///etc/passwd".into())
+        .into_validated_vec()
+        .is_err());
+    assert!(Urls::One("-o/tmp/x".into()).into_validated_vec().is_err());
+
+    // One bad entry in a list fails the whole batch.
+    let mixed: Urls = serde_json::from_str(r#"["https://ok.example/v","--exec=bad"]"#).unwrap();
+    assert!(mixed.into_validated_vec().is_err());
+}
+
+#[test]
+fn max_search_limit_clamps_at_boundaries() {
+    assert_eq!(MAX_SEARCH_LIMIT, 25);
+    let over: SearchInput = serde_json::from_str(r#"{"query":"x","limit":26}"#).unwrap();
+    let under: SearchInput = serde_json::from_str(r#"{"query":"x","limit":0}"#).unwrap();
+    assert_eq!(over.effective_limit(), MAX_SEARCH_LIMIT);
+    assert_eq!(under.effective_limit(), 1);
+}
+
+#[test]
 fn download_input_applies_defaults() {
     // Only `urls` is required; everything else defaults.
     let input: DownloadInput = serde_json::from_str(r#"{"urls":"https://x"}"#).unwrap();

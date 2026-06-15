@@ -11,6 +11,34 @@ REPO="jmagar/ytdl-mcp"
 
 log() { echo "[ytdl-mcp] $*" >&2; }
 
+# Resolve the plugin's own version from .claude-plugin/plugin.json (sibling of
+# this script's scripts/ dir) so we fetch the binary that matches this plugin
+# revision rather than whatever "latest" happens to be. Falls back to "latest"
+# (a versioned tag URL of `latest` is not valid, so we signal it specially) when
+# the manifest can't be parsed, so installs never hard-fail on a parse error.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MANIFEST="$SCRIPT_DIR/../.claude-plugin/plugin.json"
+
+plugin_version() {
+  [ -f "$MANIFEST" ] || return 1
+  if command -v jq >/dev/null 2>&1; then
+    jq -r '.version // empty' "$MANIFEST" 2>/dev/null
+  else
+    # Grab the first "version": "X.Y.Z" value without jq.
+    sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$MANIFEST" \
+      | head -n1
+  fi
+}
+
+VERSION="$(plugin_version || true)"
+if [ -n "$VERSION" ]; then
+  release_path="download/v$VERSION"
+  log "resolving binary for plugin version v$VERSION"
+else
+  release_path="latest/download"
+  log "could not read version from $MANIFEST; falling back to latest release"
+fi
+
 if [ -x "$BIN" ]; then
   exit 0
 fi
@@ -27,7 +55,7 @@ case "$os/$arch" in
     ;;
 esac
 
-url="https://github.com/$REPO/releases/latest/download/$asset"
+url="https://github.com/$REPO/releases/$release_path/$asset"
 
 fetch() { # fetch <url> <out>; prints to stdout via -O- when out is "-"
   if command -v curl >/dev/null 2>&1; then

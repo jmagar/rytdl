@@ -15,7 +15,10 @@ const YT_HOSTS: &[&str] = &[
     "youtu.be",
 ];
 
-/// `list=` prefixes that denote an auto-generated mix/radio, not a real playlist.
+/// `list=` prefixes that denote an auto-generated list, not a real playlist:
+/// `RD` = radio/mix, `RM` = a mix variant, `WL` = YouTube's "Watch Later"
+/// auto-list. None of these are user-curated playlists, so all three are
+/// stripped to send yt-dlp to the seed `v=` video.
 const MIX_PREFIXES: &[&str] = &["RD", "RM", "WL"];
 
 /// Query params that are only meaningful inside a mix/radio session.

@@ -1,0 +1,60 @@
+name: audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, Monday 06:00 UTC — catch new advisories against the committed lockfile.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the repo. cargo audit runs locally
+# and fails the job via exit code, so no issues/checks write access is needed.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (2026-03-27)
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1)
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit committed Cargo.lock for vulnerable dependencies
+        run: cargo audit
+
+  forbid-aws-lc:
+    # Hard cross-compile invariant: the TLS stack must be ring-only. If aws-lc-sys
+    # creeps into the tree, the Windows MSVC build breaks — fail fast here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable (2026-03-27)
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2 (v2.9.1)
+
+      - name: Forbid aws-lc-sys in the dependency tree
+        # `cargo tree -i aws-lc-sys` exits non-zero when the package is ABSENT,
+        # which is the state we want. So we must NOT rely on its exit code via
+        # `set -e`. Instead, capture output and grep: a match means aws-lc-sys is
+        # present -> fail the job; no match (incl. the "package not found" case)
+        # means it is absent -> pass.
+        run: |
+          if cargo tree -i aws-lc-sys 2>/dev/null | grep -q aws-lc-sys; then
+            echo "::error::aws-lc-sys present — breaks Windows cross-build (must be ring-only)"
+            exit 1
+          fi
+          echo "ok: aws-lc-sys is absent from the dependency tree (ring-only TLS)"

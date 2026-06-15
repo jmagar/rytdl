@@ -1,5 +1,9 @@
 //! Persistent download ledger and stats derived from it.
 
+#[cfg(test)]
+#[path = "history_tests.rs"]
+mod tests;
+
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
 use serde_json::{json, Value};
@@ -11,6 +15,7 @@ use std::path::PathBuf;
 use crate::bootstrap;
 use crate::config::Config;
 use crate::model::DownloadMode;
+use crate::service::DownloadPayload;
 
 fn default_history_path() -> PathBuf {
     bootstrap::project_dirs()
@@ -29,28 +34,46 @@ fn history_path(cfg: &Config) -> PathBuf {
         .unwrap_or_else(default_history_path)
 }
 
-pub(crate) fn append_download(cfg: &Config, mode: DownloadMode, payload: &Value) -> Result<()> {
+/// Cap on retained ledger entries. Rotation keeps the most recent
+/// `MAX_HISTORY_ENTRIES` lines and drops older ones. This bounds both the
+/// on-disk size and the cost of the `stats_payload` full-file scan (which is
+/// O(lines)). At ~1 KiB/line this caps the ledger near ~10 MiB.
+const MAX_HISTORY_ENTRIES: usize = 10_000;
+
+/// Rotation is amortized: we only scan/rewrite the file once the line count
+/// drifts a bit past the cap, rather than on every single append.
+const ROTATE_TRIGGER_ENTRIES: usize = MAX_HISTORY_ENTRIES + MAX_HISTORY_ENTRIES / 10;
+
+pub(crate) fn append_download(
+    cfg: &Config,
+    mode: DownloadMode,
+    payload: &DownloadPayload,
+) -> Result<()> {
     let path = history_path(cfg);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create history directory {}", parent.display()))?;
     }
 
+    // Persist the same ledger fields as before. Reading them off the typed
+    // `DownloadPayload` (rather than by string key) means a field rename is now
+    // a compile error here instead of a silently-`null` JSONL column. The
+    // emitted keys/shape are unchanged.
     let entry = json!({
         "timestamp": timestamp_now(),
         "mode": mode.as_str(),
-        "remote": payload["remote"].clone(),
-        "dest_path": payload["dest_path"].clone(),
-        "destination": payload["destination"].clone(),
-        "destinations": payload["destinations"].clone(),
-        "transferred": payload["transferred"].clone(),
-        "transfer_error": payload["transfer_error"].clone(),
-        "total_files": payload["total_files"].clone(),
-        "total_bytes": payload["total_bytes"].clone(),
-        "total_size": payload["total_size"].clone(),
-        "partial_items": payload["partial_items"].clone(),
-        "failed_items": payload["failed_items"].clone(),
-        "items": payload["items"].clone(),
+        "remote": payload.remote,
+        "dest_path": payload.dest_path,
+        "destination": payload.destination,
+        "destinations": payload.destinations,
+        "transferred": payload.transferred,
+        "transfer_error": payload.transfer_error,
+        "total_files": payload.total_files,
+        "total_bytes": payload.total_bytes,
+        "total_size": payload.total_size,
+        "partial_items": payload.partial_items,
+        "failed_items": payload.failed_items,
+        "items": payload.items,
     });
 
     let mut file = OpenOptions::new()
@@ -60,6 +83,59 @@ pub(crate) fn append_download(cfg: &Config, mode: DownloadMode, payload: &Value)
         .with_context(|| format!("open history file {}", path.display()))?;
     writeln!(file, "{}", serde_json::to_string(&entry)?)
         .with_context(|| format!("write history file {}", path.display()))?;
+    drop(file);
+
+    // Bound growth best-effort. Rotation must NEVER fail a download: mirror the
+    // append side-channel convention and only log to stderr on error.
+    if let Err(error) = rotate_if_needed(&path) {
+        tracing::warn!(%error, "failed to rotate download history; continuing");
+    }
+    Ok(())
+}
+
+/// Trim the ledger to the last [`MAX_HISTORY_ENTRIES`] lines if it has grown
+/// past [`ROTATE_TRIGGER_ENTRIES`]. Rewrites via a sibling temp file + rename so
+/// a crash mid-rotation cannot corrupt or truncate the live ledger (the rename
+/// is atomic; on failure the original file is left untouched).
+fn rotate_if_needed(path: &std::path::Path) -> Result<()> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("open history file {}", path.display()))
+        }
+    };
+
+    // Keep only the last MAX_HISTORY_ENTRIES lines in a bounded ring buffer so
+    // we never hold the whole (over-cap) file in memory at once.
+    let mut tail: VecDeque<String> = VecDeque::with_capacity(MAX_HISTORY_ENTRIES + 1);
+    let mut total = 0_usize;
+    for line in BufReader::new(file).lines() {
+        let line = line.with_context(|| format!("read history file {}", path.display()))?;
+        total += 1;
+        tail.push_back(line);
+        if tail.len() > MAX_HISTORY_ENTRIES {
+            tail.pop_front();
+        }
+    }
+
+    if total <= ROTATE_TRIGGER_ENTRIES {
+        return Ok(());
+    }
+
+    let tmp = path.with_extension("jsonl.tmp");
+    {
+        let mut out = std::fs::File::create(&tmp)
+            .with_context(|| format!("create temp history file {}", tmp.display()))?;
+        for line in &tail {
+            writeln!(out, "{line}")
+                .with_context(|| format!("write temp history file {}", tmp.display()))?;
+        }
+        out.flush()
+            .with_context(|| format!("flush temp history file {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("replace history file {}", path.display()))?;
     Ok(())
 }
 
@@ -222,7 +298,12 @@ fn timestamp_now() -> String {
 
 #[derive(Default)]
 struct Bucket {
-    downloads: u64,
+    // `downloads` and `calls` were historically two fields that `add_call`
+    // always incremented together, so they were identical by construction.
+    // Collapsed to a single counter to remove the redundancy. The stats JSON
+    // still exposes both `downloads` and `calls` keys (sourced from this one
+    // field) because the README documents `downloads` as a compatibility alias
+    // for the call count — see `buckets_to_value`.
     calls: u64,
     items: u64,
     files: u64,
@@ -231,7 +312,6 @@ struct Bucket {
 
 impl Bucket {
     fn add_call(&mut self) {
-        self.downloads += 1;
         self.calls += 1;
     }
 
@@ -249,7 +329,10 @@ fn buckets_to_value(buckets: BTreeMap<String, Bucket>) -> Value {
                 (
                     key,
                     json!({
-                        "downloads": bucket.downloads,
+                        // `downloads` is a documented compatibility alias for
+                        // the call count; both keys are sourced from the single
+                        // `calls` field (see the `Bucket` definition).
+                        "downloads": bucket.calls,
                         "calls": bucket.calls,
                         "items": bucket.items,
                         "files": bucket.files,

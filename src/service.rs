@@ -1,5 +1,8 @@
-//! High-level orchestration: resolve config, download, transfer, format.
-//! Ports the body of `youtube_download` / `youtube_probe` from `server.py`.
+//! High-level orchestration for the MCP tools: resolve the external tools,
+//! download/probe/search via yt-dlp, transfer to the SSH remote, and format the
+//! response payloads. Config is threaded as `Arc<Config>` so the blocking hops
+//! (`spawn_blocking`) move a cheap refcount bump instead of deep-cloning all of
+//! `Config`, and resolved tool paths are memoized per-process via [`ToolsCache`].
 
 mod format;
 
@@ -7,6 +10,9 @@ use anyhow::{bail, Result};
 use serde_json::json;
 use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use tokio::sync::OnceCell;
 
 use crate::bootstrap;
 use crate::config::Config;
@@ -18,12 +24,38 @@ use crate::model::{
 use crate::urls::strip_mix_params;
 
 use format::{
-    download_payload, probe_payload, render, render_download_markdown, render_probe_markdown,
+    build_download_payload, probe_payload, render, render_download, render_probe_markdown,
     render_search_markdown,
 };
 
+/// Re-exported so the history ledger (`crate::history`) can consume the typed
+/// download payload directly — `format` itself is a private submodule. The
+/// item/file sub-structs are re-exported alongside so ledger tests can build a
+/// representative payload without reaching into the private module path.
+pub(crate) use format::DownloadPayload;
+#[cfg(test)]
+pub(crate) use format::{download_payload, render_download_markdown, DownloadFile, DownloadItem};
+
 #[cfg(test)]
 pub(crate) use format::render_search_for_test;
+
+/// Process-lifetime cache of the resolved external tools. Bootstrap resolution
+/// (`which`, file checks, the exclusive cross-process lockfile, and any first-run
+/// download) is expensive and serializes concurrent calls, so we run it once per
+/// process and reuse the result on every later call.
+///
+/// Two cells because the probe/search path needs yt-dlp only (it never pays for
+/// ffmpeg's download), while the download path needs the full [`bootstrap::Tools`].
+///
+/// Cold cells fall through to `bootstrap::ensure*` (which takes the lock); warm
+/// cells return the cached `Arc` with no lock and no re-resolution. When
+/// `auto_update` is configured, caching is skipped entirely so the original
+/// per-call freshness/update probe semantics are preserved.
+#[derive(Default)]
+pub struct ToolsCache {
+    tools: OnceCell<Arc<bootstrap::Tools>>,
+    ytdlp: OnceCell<Arc<PathBuf>>,
+}
 
 /// Default archive dir when `use_archive` is on but none configured.
 fn default_archive_dir() -> PathBuf {
@@ -32,7 +64,11 @@ fn default_archive_dir() -> PathBuf {
         .unwrap_or_else(|| std::env::temp_dir().join("ytdl-mcp-state"))
 }
 
-pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> {
+pub async fn run_download(
+    cfg: &Arc<Config>,
+    cache: &ToolsCache,
+    input: DownloadInput,
+) -> Result<String> {
     let remote = input.remote.clone().or_else(|| cfg.remote.clone());
     let audio_dest = input.dest_path.clone().or_else(|| cfg.dest_path.clone());
     let video_dest = input
@@ -50,29 +86,11 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
     let target =
         crate::transfer::TransferTarget::parse(&remote, &audio_dest, video_dest.as_deref())?;
 
-    let tools = ensure_tools(cfg).await?;
+    let tools = ensure_tools(cfg, cache).await?;
 
-    let archive_dir: Option<PathBuf> = if input.use_archive {
-        let d = cfg
-            .archive_dir
-            .clone()
-            .map(PathBuf::from)
-            .unwrap_or_else(default_archive_dir);
-        std::fs::create_dir_all(&d)?;
-        Some(d)
-    } else {
-        None
-    };
-
-    let staging_base = cfg
-        .staging_dir
-        .clone()
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    std::fs::create_dir_all(&staging_base)?;
-    let staging = tempfile::Builder::new()
-        .prefix("ytdlmcp_")
-        .tempdir_in(&staging_base)?;
+    // BP-H2: archive + staging dir prep is blocking std::fs (create_dir_all,
+    // tempfile). Offload it so it never runs on a reactor worker thread.
+    let (archive_dir, staging) = prepare_dirs(cfg, input.use_archive).await?;
     let staging_path = staging.path().to_path_buf();
 
     // Audio codec: explicit arg, else the YTDLP_AUDIO_FORMAT env default.
@@ -80,9 +98,11 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         .audio_format
         .unwrap_or_else(|| crate::model::AudioFormat::parse_or_default(&cfg.audio_format));
 
-    // Download every URL (mix/radio cleaned first).
+    // Download every URL (mix/radio cleaned first). Scheme-validate as a
+    // defense-in-depth backstop (the `--` end-of-options guard at each yt-dlp
+    // call site is the primary fix for option-injection).
     let mut results: Vec<ItemResult> = Vec::new();
-    for raw in input.urls.clone().into_vec() {
+    for raw in input.urls.clone().into_validated_vec()? {
         let url = strip_mix_params(&raw);
         let r = downloader::fetch(
             &tools,
@@ -110,14 +130,10 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
             bail!("Nothing was downloaded: {}", errs.join("; "));
         }
         // Archive hit / genuinely empty — succeed with a no-op summary.
-        let mut payload = download_payload(&results, &remote, &[], true, None, None);
+        let mut payload = build_download_payload(&results, &remote, &[], true, None, None);
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
         record_history(cfg, input.mode, &mut payload);
-        return Ok(render(
-            &payload,
-            input.response_format,
-            render_download_markdown,
-        ));
+        return Ok(render_download(&payload, input.response_format));
     }
 
     // The destination each kind actually produced files for — drives both the
@@ -172,7 +188,7 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         None
     };
 
-    let mut payload = download_payload(
+    let mut payload = build_download_payload(
         &results,
         target.remote().as_str(),
         &dests,
@@ -180,18 +196,12 @@ pub async fn run_download(cfg: &Config, input: DownloadInput) -> Result<String> 
         transfer_error.clone(),
         staging_kept.as_deref(),
     );
-    if let Some(summary) = metadata_retag {
-        payload["metadata_retag"] = summary;
-    }
+    payload.metadata_retag = metadata_retag;
     if transferred {
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
     }
     record_history(cfg, input.mode, &mut payload);
-    Ok(render(
-        &payload,
-        input.response_format,
-        render_download_markdown,
-    ))
+    Ok(render_download(&payload, input.response_format))
 }
 
 async fn transfer_kind(
@@ -204,7 +214,7 @@ async fn transfer_kind(
     crate::transfer::transfer(dir, remote, dest, ssh_opts).await
 }
 
-async fn auto_retag_audio(cfg: &Config, results: &[ItemResult]) -> Option<serde_json::Value> {
+async fn auto_retag_audio(cfg: &Arc<Config>, results: &[ItemResult]) -> Option<serde_json::Value> {
     let paths = downloaded_audio_paths(results);
     auto_retag_audio_paths(cfg, paths, |cfg, paths| async move {
         crate::identify::identify_files(&cfg, paths, true).await
@@ -222,12 +232,12 @@ fn downloaded_audio_paths(results: &[ItemResult]) -> Vec<String> {
 }
 
 async fn auto_retag_audio_paths<F, Fut>(
-    cfg: &Config,
+    cfg: &Arc<Config>,
     paths: Vec<String>,
     identify: F,
 ) -> Option<serde_json::Value>
 where
-    F: FnOnce(Config, Vec<String>) -> Fut,
+    F: FnOnce(Arc<Config>, Vec<String>) -> Fut,
     Fut: Future<Output = Result<IdentifyPayload>>,
 {
     if paths.is_empty()
@@ -241,7 +251,7 @@ where
     }
 
     let attempted = paths.len();
-    match identify(cfg.clone(), paths).await {
+    match identify(Arc::clone(cfg), paths).await {
         Ok(payload) => Some(auto_retag_summary(&payload, attempted)),
         Err(error) => Some(json!({
             "attempted": attempted,
@@ -255,12 +265,12 @@ where
 
 #[cfg(test)]
 pub(crate) async fn auto_retag_audio_paths_for_test<F, Fut>(
-    cfg: &Config,
+    cfg: &Arc<Config>,
     paths: Vec<String>,
     identify: F,
 ) -> Option<serde_json::Value>
 where
-    F: FnOnce(Config, Vec<String>) -> Fut,
+    F: FnOnce(Arc<Config>, Vec<String>) -> Fut,
     Fut: Future<Output = Result<IdentifyPayload>>,
 {
     auto_retag_audio_paths(cfg, paths, identify).await
@@ -302,22 +312,85 @@ fn auto_retag_summary(payload: &IdentifyPayload, attempted: usize) -> serde_json
     })
 }
 
+/// BP-H2: prepare the archive + staging directories off the reactor. Both
+/// `create_dir_all` and `tempfile::tempdir_in` are blocking std::fs calls.
+async fn prepare_dirs(
+    cfg: &Arc<Config>,
+    use_archive: bool,
+) -> Result<(Option<PathBuf>, tempfile::TempDir)> {
+    let archive_cfg = cfg.archive_dir.clone();
+    let staging_cfg = cfg.staging_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        let archive_dir: Option<PathBuf> = if use_archive {
+            let d = archive_cfg
+                .map(PathBuf::from)
+                .unwrap_or_else(default_archive_dir);
+            std::fs::create_dir_all(&d)?;
+            Some(d)
+        } else {
+            None
+        };
+
+        let staging_base = staging_cfg
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        std::fs::create_dir_all(&staging_base)?;
+        let staging = tempfile::Builder::new()
+            .prefix("ytdlmcp_")
+            .tempdir_in(&staging_base)?;
+        Ok::<_, anyhow::Error>((archive_dir, staging))
+    })
+    .await?
+}
+
 /// Resolve/install yt-dlp + ffmpeg off the async runtime (blocking network I/O).
-async fn ensure_tools(cfg: &Config) -> Result<bootstrap::Tools> {
-    let cfg = cfg.clone();
-    tokio::task::spawn_blocking(move || bootstrap::ensure(&cfg)).await?
+///
+/// Memoized via [`ToolsCache`]: the first call runs `bootstrap::ensure` (which
+/// takes the exclusive cross-process lock and may download); later calls reuse
+/// the cached `Arc<Tools>` with no lock and no re-resolution. When `auto_update`
+/// is on the cache is bypassed so the per-call freshness/update probe still runs.
+async fn ensure_tools(cfg: &Arc<Config>, cache: &ToolsCache) -> Result<Arc<bootstrap::Tools>> {
+    if cfg.auto_update {
+        return resolve_tools(cfg).await;
+    }
+    cache
+        .tools
+        .get_or_try_init(|| resolve_tools(cfg))
+        .await
+        .cloned()
+}
+
+/// Cold-path resolution of the full toolset, off the reactor.
+async fn resolve_tools(cfg: &Arc<Config>) -> Result<Arc<bootstrap::Tools>> {
+    let cfg = Arc::clone(cfg);
+    tokio::task::spawn_blocking(move || bootstrap::ensure(&cfg).map(Arc::new)).await?
 }
 
 /// Resolve yt-dlp only — probe never needs ffmpeg, so don't pay for its download.
-async fn ensure_ytdlp(cfg: &Config) -> Result<PathBuf> {
-    let cfg = cfg.clone();
-    tokio::task::spawn_blocking(move || bootstrap::ensure_ytdlp(&cfg)).await?
+///
+/// Memoized like [`ensure_tools`], in its own cell (the probe/search path never
+/// needs the full toolset). `auto_update` bypasses the cache identically.
+async fn ensure_ytdlp(cfg: &Arc<Config>, cache: &ToolsCache) -> Result<Arc<PathBuf>> {
+    if cfg.auto_update {
+        return resolve_ytdlp(cfg).await;
+    }
+    cache
+        .ytdlp
+        .get_or_try_init(|| resolve_ytdlp(cfg))
+        .await
+        .cloned()
 }
 
-pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
-    let ytdlp = ensure_ytdlp(cfg).await?;
+/// Cold-path resolution of yt-dlp only, off the reactor.
+async fn resolve_ytdlp(cfg: &Arc<Config>) -> Result<Arc<PathBuf>> {
+    let cfg = Arc::clone(cfg);
+    tokio::task::spawn_blocking(move || bootstrap::ensure_ytdlp(&cfg).map(Arc::new)).await?
+}
+
+pub async fn run_probe(cfg: &Arc<Config>, cache: &ToolsCache, input: ProbeInput) -> Result<String> {
+    let ytdlp = ensure_ytdlp(cfg, cache).await?;
     let mut results = Vec::new();
-    for raw in input.urls.into_vec() {
+    for raw in input.urls.into_validated_vec()? {
         let url = strip_mix_params(&raw);
         results.push(
             downloader::probe(
@@ -337,7 +410,7 @@ pub async fn run_probe(cfg: &Config, input: ProbeInput) -> Result<String> {
     ))
 }
 
-pub async fn run_identify(cfg: &Config, input: IdentifyInput) -> Result<String> {
+pub async fn run_identify(cfg: &Arc<Config>, input: IdentifyInput) -> Result<String> {
     let payload =
         crate::identify::identify_files(cfg, input.paths.into_vec(), input.write_tags).await?;
     Ok(render(
@@ -347,13 +420,17 @@ pub async fn run_identify(cfg: &Config, input: IdentifyInput) -> Result<String> 
     ))
 }
 
-pub async fn run_search_payload(cfg: &Config, input: &SearchInput) -> Result<SearchPayload> {
+pub async fn run_search_payload(
+    cfg: &Arc<Config>,
+    cache: &ToolsCache,
+    input: &SearchInput,
+) -> Result<SearchPayload> {
     let query = input.query.trim();
     if query.is_empty() {
         bail!("Search query cannot be empty.");
     }
 
-    let ytdlp = ensure_ytdlp(cfg).await?;
+    let ytdlp = ensure_ytdlp(cfg, cache).await?;
     let limit = input.effective_limit();
     let results = downloader::search_youtube(
         &ytdlp,
@@ -371,8 +448,12 @@ pub async fn run_search_payload(cfg: &Config, input: &SearchInput) -> Result<Sea
     })
 }
 
-pub async fn run_search(cfg: &Config, input: SearchInput) -> Result<String> {
-    let payload = run_search_payload(cfg, &input).await?;
+pub async fn run_search(
+    cfg: &Arc<Config>,
+    cache: &ToolsCache,
+    input: SearchInput,
+) -> Result<String> {
+    let payload = run_search_payload(cfg, cache, &input).await?;
     Ok(render(
         &serde_json::to_value(&payload)?,
         input.response_format,
@@ -380,18 +461,18 @@ pub async fn run_search(cfg: &Config, input: SearchInput) -> Result<String> {
     ))
 }
 
-fn record_history(cfg: &Config, mode: crate::model::DownloadMode, payload: &mut serde_json::Value) {
+fn record_history(cfg: &Config, mode: crate::model::DownloadMode, payload: &mut DownloadPayload) {
     if let Err(error) = crate::history::append_download(cfg, mode, payload) {
         tracing::warn!(%error, "failed to append download history");
-        payload["history_error"] = serde_json::Value::String(error.to_string());
+        payload.history_error = Some(error.to_string());
     }
 }
 
 async fn record_plex_playlist(
-    cfg: &Config,
+    cfg: &Arc<Config>,
     requested_playlist: Option<String>,
     results: &[ItemResult],
-    payload: &mut serde_json::Value,
+    payload: &mut DownloadPayload,
 ) {
     let Some(playlist) = requested_playlist
         .or_else(|| cfg.plex_playlist.clone())
@@ -399,25 +480,62 @@ async fn record_plex_playlist(
     else {
         return;
     };
-    let cfg = cfg.clone();
-    let results = results.to_vec();
+    let cfg = Arc::clone(cfg);
+    // Map the downloader's results into Plex's own input DTO here, so the Plex
+    // integration never depends on `downloader::ItemResult`'s shape.
+    let tracks = plex_track_inputs(results);
     match tokio::task::spawn_blocking(move || {
-        crate::plex::add_downloaded_audio(&cfg, &playlist, &results)
+        crate::plex::add_downloaded_audio(&cfg, &playlist, &tracks)
     })
     .await
     {
         Ok(Ok(update)) => {
-            payload["plex_playlist"] = serde_json::to_value(update).unwrap_or_default();
+            payload.plex_playlist = Some(serde_json::to_value(update).unwrap_or_default());
         }
         Ok(Err(error)) => {
             tracing::warn!(%error, "failed to update Plex playlist");
-            payload["plex_playlist_error"] = serde_json::Value::String(error.to_string());
+            payload.plex_playlist_error = Some(error.to_string());
         }
         Err(error) => {
             tracing::warn!(%error, "Plex playlist task failed");
-            payload["plex_playlist_error"] = serde_json::Value::String(error.to_string());
+            payload.plex_playlist_error = Some(error.to_string());
         }
     }
+}
+
+/// Map download results into the Plex-owned [`PlexTrackInput`] DTO.
+///
+/// One DTO per downloaded *audio* file, in result/file order. The display title
+/// is resolved from the file's own title, falling back to the item title, then
+/// the file stem; files whose resolved title is empty are dropped. The uploader
+/// falls back from the file's uploader to the item's. De-duplication of equal
+/// (title, uploader) pairs is left to the Plex layer so this mapper stays a pure
+/// projection of the downloader model.
+fn plex_track_inputs(results: &[ItemResult]) -> Vec<crate::plex::PlexTrackInput> {
+    let mut tracks = Vec::new();
+    for result in results {
+        for file in &result.files {
+            if file.kind != "audio" {
+                continue;
+            }
+            let title = file
+                .title
+                .as_deref()
+                .or(result.title.as_deref())
+                .or_else(|| file.path.file_stem().and_then(|s| s.to_str()))
+                .unwrap_or("")
+                .trim();
+            if title.is_empty() {
+                continue;
+            }
+            let uploader = file.uploader.clone().or_else(|| result.uploader.clone());
+            tracks.push(crate::plex::PlexTrackInput {
+                title: title.to_string(),
+                uploader,
+            });
+        }
+    }
+    tracks
 }
 
 pub fn run_stats(cfg: &Config, input: StatsInput) -> Result<String> {

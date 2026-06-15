@@ -6,6 +6,7 @@ description = "Cross-platform MCP server that downloads media with yt-dlp, tags 
 license = "MIT"
 repository = "https://github.com/jmagar/ytdl-mcp"
 default-run = "ytdl-mcp"
+build = "build.rs"
 
 [[bin]]
 name = "ytdl-mcp"
@@ -62,6 +63,17 @@ dialoguer = { version = "0.12.0", default-features = false }
 sha2 = "0.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 lofty = "0.24.0"
+
+# Central lint policy. Conservative on purpose: CI gates on `clippy -D warnings`,
+# so these must not turn currently-clean code into errors.
+#   - `unsafe_code` stays at the default level (NOT `forbid`) because util.rs has a
+#     small `extern "C"` FFI `kill` declaration that requires `unsafe`.
+#   - clippy `all = "warn"` matches the default clippy lint group at warn level,
+#     i.e. the same set CI already enforces — no new lints are introduced.
+[lints.rust]
+
+[lints.clippy]
+all = "warn"
 
 [profile.release]
 strip = true

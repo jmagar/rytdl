@@ -15,26 +15,59 @@ use crate::model::{DownloadInput, IdentifyInput, ProbeInput, SearchInput, StatsI
 use crate::search_app;
 use crate::service;
 
+/// Build a uniform error result: `CallToolResult::error` with the `"Error: {e}"`
+/// content shape. All success/error helpers funnel their error path through this.
+fn error_tool_result(error: impl std::fmt::Display) -> CallToolResult {
+    CallToolResult::error(vec![Content::text(format!("Error: {error}"))])
+}
+
+/// Wrap a fallible text-producing operation in the shared tool-result contract:
+/// `Ok(text)` → a success result, `Err(e)` → [`error_tool_result`].
 fn text_tool_result<E: std::fmt::Display>(
     result: std::result::Result<String, E>,
-) -> Result<CallToolResult, ErrorData> {
-    Ok(match result {
+) -> CallToolResult {
+    match result {
         Ok(text) => CallToolResult::success(vec![Content::text(text)]),
         Err(e) => error_tool_result(e),
-    })
+    }
+}
+
+/// Like [`text_tool_result`], but for a structured payload backing an MCP App:
+/// the success result carries the pretty-printed JSON as text content plus
+/// `structured_content` and the supplied `meta` (the App resource pointer). The
+/// error path is identical to [`text_tool_result`] / [`error_tool_result`].
+fn structured_tool_result<T, E>(
+    result: std::result::Result<T, E>,
+    meta: rmcp::model::Meta,
+) -> CallToolResult
+where
+    T: serde::Serialize,
+    E: std::fmt::Display,
+{
+    match result {
+        Ok(payload) => {
+            let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into());
+            let mut result = CallToolResult::success(vec![Content::text(text)]);
+            result.structured_content = Some(serde_json::to_value(&payload).unwrap_or_default());
+            result.meta = Some(meta);
+            result
+        }
+        Err(e) => error_tool_result(e),
+    }
 }
 
 #[cfg(test)]
 #[path = "mcp_tests.rs"]
 mod tests;
 
-fn error_tool_result(error: impl std::fmt::Display) -> CallToolResult {
-    CallToolResult::error(vec![Content::text(format!("Error: {error}"))])
-}
-
 #[derive(Clone)]
 pub struct YtdlServer {
     cfg: Arc<Config>,
+    /// Process-lifetime cache of the resolved external tools (yt-dlp + ffmpeg).
+    /// Shared across clones so bootstrap resolution + its exclusive cross-process
+    /// lock run once per process instead of on every tool call. See
+    /// [`service::ToolsCache`].
+    tools: Arc<service::ToolsCache>,
     // Referenced by the #[tool_handler] expansion; kept even though direct reads
     // aren't visible to dead-code analysis.
     #[allow(dead_code)]
@@ -45,6 +78,7 @@ impl YtdlServer {
     pub fn new(cfg: Config) -> Self {
         Self {
             cfg: Arc::new(cfg),
+            tools: Arc::new(service::ToolsCache::default()),
             tool_router: Self::tool_router(),
         }
     }
@@ -63,7 +97,9 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<DownloadInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        text_tool_result(service::run_download(&self.cfg, input).await)
+        Ok(text_tool_result(
+            service::run_download(&self.cfg, &self.tools, input).await,
+        ))
     }
 
     /// Resolve title/duration/uploader/format counts for URLs without
@@ -76,7 +112,9 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<ProbeInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        text_tool_result(service::run_probe(&self.cfg, input).await)
+        Ok(text_tool_result(
+            service::run_probe(&self.cfg, &self.tools, input).await,
+        ))
     }
 
     /// Fingerprint local audio files with Chromaprint/fpcalc and return
@@ -89,7 +127,9 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<IdentifyInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        text_tool_result(service::run_identify(&self.cfg, input).await)
+        Ok(text_tool_result(
+            service::run_identify(&self.cfg, input).await,
+        ))
     }
 
     /// Search YouTube through yt-dlp without downloading. Returns result URLs that
@@ -102,7 +142,9 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        text_tool_result(service::run_search(&self.cfg, input).await)
+        Ok(text_tool_result(
+            service::run_search(&self.cfg, &self.tools, input).await,
+        ))
     }
 
     /// Summarize the persistent download ledger written by `youtube_download`.
@@ -114,7 +156,7 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<StatsInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        text_tool_result(service::run_stats(&self.cfg, input))
+        Ok(text_tool_result(service::run_stats(&self.cfg, input)))
     }
 
     /// Open the interactive YouTube search MCP App. UI-capable hosts render the
@@ -129,17 +171,10 @@ impl YtdlServer {
         &self,
         Parameters(input): Parameters<SearchInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        match service::run_search_payload(&self.cfg, &input).await {
-            Ok(payload) => {
-                let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into());
-                let mut result = CallToolResult::success(vec![Content::text(text)]);
-                result.structured_content =
-                    Some(serde_json::to_value(&payload).unwrap_or_default());
-                result.meta = Some(search_app::tool_meta());
-                Ok(result)
-            }
-            Err(e) => Ok(error_tool_result(e)),
-        }
+        Ok(structured_tool_result(
+            service::run_search_payload(&self.cfg, &self.tools, &input).await,
+            search_app::tool_meta(),
+        ))
     }
 }
 
@@ -152,7 +187,10 @@ impl ServerHandler for YtdlServer {
                 .enable_resources()
                 .build(),
         )
-        .with_server_info(Implementation::new("ytdl-mcp", env!("CARGO_PKG_VERSION")))
+        .with_server_info(Implementation::new(
+            "ytdl-mcp",
+            concat!(env!("CARGO_PKG_VERSION"), " (", env!("YTDL_GIT_SHA"), ")"),
+        ))
     }
 
     fn list_resources(

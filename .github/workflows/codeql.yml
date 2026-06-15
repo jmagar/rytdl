@@ -1,0 +1,84 @@
+# SAST + secret scanning.
+#
+# Two independent jobs:
+#   * codeql   — GitHub CodeQL static analysis for Rust.
+#   * gitleaks — secret scanning over the working tree.
+#
+# NOTE: CodeQL support for Rust is comparatively new and may require it to be
+# enabled for this repository in the GitHub settings (Settings → Code security
+# → CodeQL analysis / Default setup). If analysis fails to start for `rust`, a
+# maintainer can enable Rust there or flip the `build-mode` below to `autobuild`.
+name: codeql
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Mondays 07:13 UTC — off the hour to avoid scheduler contention.
+    - cron: "13 7 * * 1"
+
+# Minimal permissions; CodeQL needs to upload results to the security tab.
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (rust)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          languages: rust
+          # `build-mode: none` skips a full cargo build — Rust analysis works
+          # from source, keeping the job fast. Switch to `autobuild` if a future
+          # CodeQL release requires a built artifact.
+          build-mode: none
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3.36.2
+        with:
+          category: "/language:rust"
+
+  gitleaks:
+    name: Secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      # Pinned gitleaks release; integrity is verified against the release's
+      # published checksums file at download time (see the install step).
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Full history so the scan covers every commit, not just the tip.
+          fetch-depth: 0
+
+      - name: Install gitleaks (pinned OSS binary)
+        run: |
+          set -euo pipefail
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL -o "$tarball" "${base}/${tarball}"
+          curl -sSfL -o checksums.txt "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          # Verify integrity against the release's own published checksums file.
+          grep " ${tarball}\$" checksums.txt | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+          chmod +x gitleaks
+          ./gitleaks version
+
+      - name: Run gitleaks
+        run: |
+          set -euo pipefail
+          # --no-git scans the checked-out tree (all tracked files); fails the
+          # job on any finding so leaked Plex/AcoustID tokens block the build.
+          ./gitleaks detect --source . --no-git --redact -v
