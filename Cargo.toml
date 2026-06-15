@@ -60,7 +60,7 @@ ureq = { version = "3.3.0", default-features = false, features = ["rustls"] }
 ffmpeg-sidecar = "2.5.2"
 fs2 = "0.4.3"
 dialoguer = { version = "0.12.0", default-features = false }
-sha2 = "0.10"
+sha2 = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 lofty = "0.24.0"
 
