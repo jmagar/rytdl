@@ -272,9 +272,10 @@ config** — it is not a hardened multi-tenant boundary.
 
 - **Tool-call URLs reach yt-dlp.** Whatever `urls` an MCP caller passes are
   handed to yt-dlp, a powerful extraction tool. Only point callers at it that
-  you trust, and supply `http`/`https` URLs. (A hardening pass adding a `--`
-  end-of-options guard plus scheme validation is in progress; the trust
-  assumption above holds regardless.)
+  you trust. Tool-call URLs are validated as `http`/`https` before they reach
+  yt-dlp, and every positional is passed after a `--` end-of-options separator so
+  a `-`-prefixed value can't be parsed as a flag; the trust assumption above
+  still holds regardless.
 - **SSH is key-only and non-interactive.** Transfers force `BatchMode=yes` and
   `StrictHostKeyChecking=accept-new`, so a TTY-less server fails fast instead of
   prompting; there is no password auth. Auth comes from your SSH key/agent and

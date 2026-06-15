@@ -6,11 +6,14 @@ mod tests;
 
 use anyhow::{Context, Result};
 use chrono::{SecondsFormat, Utc};
+use fs2::FileExt;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::bootstrap;
 use crate::config::Config;
@@ -76,13 +79,23 @@ pub(crate) fn append_download(
         "items": payload.items,
     });
 
+    let line = serde_json::to_string(&entry)?;
+
+    // Serialize the append+rotate critical section across threads AND processes
+    // with an exclusive advisory lock on a sibling `.lock` file. Without it, two
+    // concurrent appends can interleave inside a single O_APPEND `writeln!`
+    // (write_all is not guaranteed to be one syscall) and a concurrent rotation
+    // can rename a snapshot over the ledger between another writer's read and its
+    // own append — corrupting JSONL or losing entries past the cap. Best-effort:
+    // on a lock-less filesystem we warn and proceed (mirrors bootstrap's lock).
+    let _guard = HistoryLock::acquire(&path);
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
         .with_context(|| format!("open history file {}", path.display()))?;
-    writeln!(file, "{}", serde_json::to_string(&entry)?)
-        .with_context(|| format!("write history file {}", path.display()))?;
+    writeln!(file, "{line}").with_context(|| format!("write history file {}", path.display()))?;
     drop(file);
 
     // Bound growth best-effort. Rotation must NEVER fail a download: mirror the
@@ -93,10 +106,90 @@ pub(crate) fn append_download(
     Ok(())
 }
 
+/// Exclusive advisory lock over the append+rotate critical section, held for the
+/// lifetime of the guard and released on drop. Uses a sibling `<ledger>.lock`
+/// file so it never interferes with the ledger's own inode (which rotation
+/// replaces via rename). Lock acquisition is best-effort: if the lock file can't
+/// be created or locked (e.g. a filesystem without advisory locks), we warn once
+/// and proceed unlocked rather than failing the download.
+struct HistoryLock(Option<std::fs::File>);
+
+impl HistoryLock {
+    fn acquire(ledger: &Path) -> Self {
+        let mut name = ledger
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| OsString::from("downloads.jsonl"));
+        name.push(".lock");
+        let lock_path = match ledger.parent() {
+            Some(parent) => parent.join(name),
+            None => PathBuf::from(name),
+        };
+        match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+        {
+            Ok(file) => match file.lock_exclusive() {
+                Ok(()) => HistoryLock(Some(file)),
+                Err(error) => {
+                    tracing::warn!(%error, "could not lock history ledger; proceeding unlocked");
+                    HistoryLock(None)
+                }
+            },
+            Err(error) => {
+                tracing::warn!(%error, "could not open history lock file; proceeding unlocked");
+                HistoryLock(None)
+            }
+        }
+    }
+}
+
+impl Drop for HistoryLock {
+    fn drop(&mut self) {
+        if let Some(file) = &self.0 {
+            let _ = FileExt::unlock(file);
+        }
+    }
+}
+
+/// Process-local rotation counter. Combined with the PID it yields a temp
+/// filename unique to each rotation attempt within this process, so two
+/// concurrent `append_download` calls that both cross the trigger never write to
+/// the same temp file (which would interleave/corrupt the JSONL). See
+/// [`rotation_temp_path`].
+static ROTATION_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Build a per-attempt temp path *in the same directory* as the ledger (so the
+/// final `rename` is atomic — same filesystem). The name embeds the PID and a
+/// process-local atomic counter rather than a fixed `downloads.jsonl.tmp`, so
+/// concurrent rotations get distinct temp files and cannot clobber each other.
+fn rotation_temp_path(path: &std::path::Path) -> PathBuf {
+    let seq = ROTATION_SEQ.fetch_add(1, Ordering::Relaxed);
+    let pid = std::process::id();
+    // Suffix the existing file name so the temp sits beside the ledger and keeps
+    // its directory (e.g. `downloads.jsonl` -> `downloads.jsonl.<pid>.<seq>.tmp`).
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| OsString::from("downloads.jsonl"));
+    name.push(format!(".{pid}.{seq}.tmp"));
+    match path.parent() {
+        Some(parent) => parent.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
 /// Trim the ledger to the last [`MAX_HISTORY_ENTRIES`] lines if it has grown
 /// past [`ROTATE_TRIGGER_ENTRIES`]. Rewrites via a sibling temp file + rename so
 /// a crash mid-rotation cannot corrupt or truncate the live ledger (the rename
 /// is atomic; on failure the original file is left untouched).
+///
+/// Concurrency: the temp file is unique per attempt (see [`rotation_temp_path`]),
+/// so concurrent rotations never interleave writes. The `rename`s may still race,
+/// in which case the last writer wins — both inputs are valid trimmed snapshots,
+/// so that is acceptable. Each rotation cleans up its own temp file on error.
 fn rotate_if_needed(path: &std::path::Path) -> Result<()> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -108,33 +201,74 @@ fn rotate_if_needed(path: &std::path::Path) -> Result<()> {
 
     // Keep only the last MAX_HISTORY_ENTRIES lines in a bounded ring buffer so
     // we never hold the whole (over-cap) file in memory at once.
+    //
+    // A single unreadable line (e.g. invalid UTF-8 from a prior corrupted write)
+    // must NOT wedge rotation forever: instead of `?`-aborting on a read error we
+    // drop that line and keep going, so the poison line gets rotated OUT instead
+    // of growing the ledger unbounded. Dropped lines are counted and warned once
+    // below. A dropped line still counts toward `total` (it occupies a physical
+    // line and contributes to file growth), keeping the trigger logic correct.
     let mut tail: VecDeque<String> = VecDeque::with_capacity(MAX_HISTORY_ENTRIES + 1);
     let mut total = 0_usize;
-    for line in BufReader::new(file).lines() {
-        let line = line.with_context(|| format!("read history file {}", path.display()))?;
-        total += 1;
-        tail.push_back(line);
-        if tail.len() > MAX_HISTORY_ENTRIES {
-            tail.pop_front();
+    let mut dropped = 0_u64;
+    let mut lines = BufReader::new(file).lines();
+    loop {
+        match lines.next() {
+            Some(Ok(line)) => {
+                total += 1;
+                tail.push_back(line);
+                if tail.len() > MAX_HISTORY_ENTRIES {
+                    tail.pop_front();
+                }
+            }
+            Some(Err(_)) => {
+                // Unreadable line: count it as a dropped entry and continue, so a
+                // poison line is rotated out rather than aborting the rotation.
+                total += 1;
+                dropped += 1;
+            }
+            None => break,
         }
+    }
+
+    if dropped > 0 {
+        tracing::warn!(
+            dropped,
+            "dropped unreadable lines while rotating download history"
+        );
     }
 
     if total <= ROTATE_TRIGGER_ENTRIES {
         return Ok(());
     }
 
-    let tmp = path.with_extension("jsonl.tmp");
+    let tmp = rotation_temp_path(path);
+    if let Err(error) = write_and_swap(&tmp, path, &tail) {
+        // Best-effort cleanup so a failed rotation doesn't orphan our temp file.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Write the trimmed `tail` to `tmp`, then atomically `rename` it over `path`.
+/// Split out so the caller can clean up `tmp` on any error from here.
+fn write_and_swap(
+    tmp: &std::path::Path,
+    path: &std::path::Path,
+    tail: &VecDeque<String>,
+) -> Result<()> {
     {
-        let mut out = std::fs::File::create(&tmp)
+        let mut out = std::fs::File::create(tmp)
             .with_context(|| format!("create temp history file {}", tmp.display()))?;
-        for line in &tail {
+        for line in tail {
             writeln!(out, "{line}")
                 .with_context(|| format!("write temp history file {}", tmp.display()))?;
         }
         out.flush()
             .with_context(|| format!("flush temp history file {}", tmp.display()))?;
     }
-    std::fs::rename(&tmp, path)
+    std::fs::rename(tmp, path)
         .with_context(|| format!("replace history file {}", path.display()))?;
     Ok(())
 }

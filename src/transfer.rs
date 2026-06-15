@@ -43,9 +43,13 @@ impl std::fmt::Display for TransferValidationError {
             Self::Empty { field } => write!(f, "{field} must not be empty"),
             Self::LeadingDash { field } => write!(f, "{field} must not start with '-'"),
             Self::BadChars { field } => {
+                // Shared variant: `RemotePath` rejects only control characters
+                // (whitespace is allowed in names like "Title [id]"), while
+                // `RemoteSpec` additionally rejects whitespace. Keep the message
+                // truthful for both uses rather than over-claiming for the path.
                 write!(
                     f,
-                    "{field} must not contain whitespace or control characters"
+                    "{field} must not contain control characters (the SSH remote also rejects whitespace)"
                 )
             }
             Self::Traversal { field } => {
@@ -104,8 +108,8 @@ impl RemotePath {
     ///   - empty / whitespace-only
     ///   - any control character
     ///   - a leading `-` (option-injection defense, matching `RemoteSpec`)
-    ///   - any `..` path segment (directory traversal)
     ///   - non-absolute paths (must start with `/`)
+    ///   - any `..` path segment (directory traversal)
     fn parse_typed(raw: impl Into<String>) -> std::result::Result<Self, TransferValidationError> {
         const FIELD: &str = "remote destination path";
         let raw = raw.into();

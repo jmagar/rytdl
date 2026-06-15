@@ -1,6 +1,41 @@
 use rmcp::ServerHandler;
 
 use super::{error_tool_result, structured_tool_result, text_tool_result, YtdlServer};
+use crate::config::Config;
+
+/// A minimal, valid `Config` built with benign defaults. These router/get_info
+/// tests only need a constructed `YtdlServer`; they must NOT read process env
+/// (`Config::from_env`), which is unguarded by the env-lock used elsewhere and
+/// would flake if any `YTDLP_*` var is set or another test mutates env.
+fn test_config() -> Config {
+    Config {
+        remote: None,
+        dest_path: None,
+        video_dest_path: None,
+        staging_dir: None,
+        audio_format: "mp3".into(),
+        ssh_opts: vec![],
+        archive_dir: None,
+        history_path: None,
+        plex_url: None,
+        plex_token: None,
+        plex_playlist: None,
+        clean_metadata: true,
+        acoustid_client_key: None,
+        fpcalc_path: None,
+        musicbrainz_contact: None,
+        auto_update: true,
+        max_age_days: 14,
+        update_pre: false,
+        ytdlp_path: None,
+        ffmpeg_path: None,
+        extractor_args: None,
+        ytdlp_sha256: None,
+        ffmpeg_sha256: None,
+        ytdlp_timeout_secs: 1800,
+        transfer_timeout_secs: 600,
+    }
+}
 
 /// Every tool this server exposes. The dispatch surface is the source of truth
 /// for the MCP contract, so the test pins the exact set.
@@ -59,7 +94,7 @@ fn tool_router_advertises_all_six_tools() {
 fn constructed_server_router_carries_every_tool_route() {
     // Build a real server instance and confirm its per-instance tool router
     // (the one #[tool_handler] dispatches through) has a route for each tool.
-    let server = YtdlServer::new(crate::config::Config::from_env());
+    let server = YtdlServer::new(test_config());
     // `mcp_tests` is a child module of `mcp`, so the private `tool_router` field
     // on the constructed instance is reachable here.
     for name in EXPECTED_TOOLS {
@@ -72,7 +107,7 @@ fn constructed_server_router_carries_every_tool_route() {
 
 #[test]
 fn get_info_enables_tools_and_resources() {
-    let server = YtdlServer::new(crate::config::Config::from_env());
+    let server = YtdlServer::new(test_config());
     let info = server.get_info();
 
     assert!(

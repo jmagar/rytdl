@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 use super::*;
 use crate::config::Config;
 use crate::model::DownloadMode;
-use crate::service::{DownloadFile, DownloadItem, DownloadPayload};
+use crate::service::{DownloadFile, DownloadItem, DownloadPayload, DownloadStatus};
 
 /// Minimal Config pointing the ledger at `path`. Only `history_path` matters
 /// for these tests; everything else is a benign default.
@@ -67,7 +67,7 @@ fn sample_payload(uploader: &str, transferred: bool) -> DownloadPayload {
         failed_items: 0,
         items: vec![DownloadItem {
             url: String::new(),
-            status: "ok",
+            status: DownloadStatus::Ok,
             title: Some("Some Track".into()),
             video_id: None,
             duration: None,
@@ -252,4 +252,130 @@ fn rotation_bounds_the_ledger_and_keeps_recent_entries() {
     // Stats still parse the trimmed ledger cleanly.
     let stats = stats_payload(&cfg, 5).unwrap();
     assert_eq!(stats["skipped_entries"].as_u64(), Some(0));
+}
+
+/// Seed `path` with `count` valid, indexed ledger lines.
+fn seed_ledger(path: &Path, count: usize) {
+    let mut f = std::fs::File::create(path).unwrap();
+    for i in 0..count {
+        let entry = json!({
+            "timestamp": "2024-01-01T00:00:00Z",
+            "mode": "audio",
+            "seq": i,
+            "total_files": 0,
+            "total_bytes": 0,
+            "items": [],
+        });
+        writeln!(f, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+    }
+}
+
+/// Count `*.tmp` files left in `dir` — there must be none after rotation.
+fn orphan_tmp_count(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+        .count()
+}
+
+#[test]
+fn concurrent_appends_keep_the_ledger_valid_and_bounded() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("downloads.jsonl");
+
+    // Seed just past the trigger so EVERY concurrent append crosses the rotation
+    // threshold and races to rewrite the file.
+    seed_ledger(&path, ROTATE_TRIGGER_ENTRIES + 1);
+
+    let cfg = config_with_history(&path);
+    const N: usize = 8;
+    std::thread::scope(|scope| {
+        for t in 0..N {
+            let cfg = &cfg;
+            scope.spawn(move || {
+                let uploader = format!("Worker {t}");
+                let payload = sample_payload(&uploader, true);
+                append_download(cfg, DownloadMode::Audio, &payload).unwrap();
+            });
+        }
+    });
+
+    // The ledger must remain valid JSONL: stats parses with no skipped entries
+    // and no interleaved/corrupt lines from a shared temp file.
+    let stats = stats_payload(&cfg, 0).unwrap();
+    assert_eq!(
+        stats["skipped_entries"].as_u64(),
+        Some(0),
+        "rotation produced corrupt/interleaved JSONL"
+    );
+
+    // The file is bounded near the cap (rename-race means one rotation wins; it
+    // may include a few of the concurrently-appended lines).
+    let contents = std::fs::read_to_string(&path).unwrap();
+    let lines = contents.lines().count();
+    assert!(
+        lines <= MAX_HISTORY_ENTRIES + N,
+        "ledger not bounded after concurrent rotations: {lines} lines"
+    );
+    assert!(
+        lines >= MAX_HISTORY_ENTRIES - N,
+        "ledger lost far too many entries: {lines} lines"
+    );
+
+    // No temp file orphaned by any rotation attempt.
+    assert_eq!(
+        orphan_tmp_count(dir.path()),
+        0,
+        "a rotation left an orphan .tmp file behind"
+    );
+}
+
+#[test]
+fn poison_line_does_not_wedge_rotation() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("downloads.jsonl");
+
+    // Build a file with enough valid lines to exceed the trigger, plus one line
+    // of invalid UTF-8 that the line reader cannot decode. Pre-fix, this poison
+    // line aborts every rotation and the ledger grows unbounded forever.
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        for i in 0..(ROTATE_TRIGGER_ENTRIES + 10) {
+            let entry = json!({
+                "timestamp": "2024-01-01T00:00:00Z",
+                "mode": "audio",
+                "seq": i,
+                "total_files": 0,
+                "total_bytes": 0,
+                "items": [],
+            });
+            f.write_all(serde_json::to_string(&entry).unwrap().as_bytes())
+                .unwrap();
+            f.write_all(b"\n").unwrap();
+            // Inject the invalid-UTF-8 poison line early so it falls inside the
+            // window that rotation must read through.
+            if i == 5 {
+                f.write_all(&[0xff, 0xfe, 0x80, b'\n']).unwrap();
+            }
+        }
+    }
+
+    let cfg = config_with_history(&path);
+    // A single append triggers rotation; it must bound the file rather than wedge.
+    append_download(&cfg, DownloadMode::Audio, &sample_payload("Artist P", true)).unwrap();
+
+    let contents = std::fs::read(&path).unwrap();
+    let line_count = contents.iter().filter(|&&b| b == b'\n').count();
+    assert!(
+        line_count <= MAX_HISTORY_ENTRIES + 1,
+        "rotation wedged on poison line: {line_count} lines remain"
+    );
+
+    // The poison bytes were rotated OUT, so the trimmed ledger is now clean UTF-8
+    // and parses without skips.
+    let text = String::from_utf8(contents).expect("poison line was not dropped");
+    let stats = stats_payload(&cfg, 0).unwrap();
+    assert_eq!(stats["skipped_entries"].as_u64(), Some(0));
+    assert!(text.contains("\"uploader\":\"Artist P\""));
 }

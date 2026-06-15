@@ -85,19 +85,32 @@ pub async fn run_capped(
     let stderr_task = tokio::spawn(async move {
         let mut buf = [0_u8; 8192];
         let mut tail = Vec::new();
+        // True once at least one byte has been evicted from the ring buffer, i.e.
+        // the child produced more than `limit` bytes of stderr. This is what makes
+        // the truncation marker accurate even at the exact-`limit` boundary, where
+        // `tail.len() == limit` but nothing was actually dropped.
+        let mut overflowed = false;
         loop {
             let read = stderr.read(&mut buf).await?;
             if read == 0 {
                 break;
             }
             match stderr_tail_cap {
-                Some(limit) => append_tail(&mut tail, &buf[..read], limit),
+                Some(limit) => {
+                    if append_tail(&mut tail, &buf[..read], limit) {
+                        overflowed = true;
+                    }
+                }
                 None => tail.extend_from_slice(&buf[..read]),
             }
         }
         let text = match stderr_tail_cap {
-            Some(limit) => stderr_tail_text(&tail, limit),
-            None => String::from_utf8_lossy(&tail).to_string(),
+            // Only style as truncated when bytes were actually evicted. At the
+            // exact-`limit` boundary (`tail.len() == limit`, nothing dropped) we
+            // bypass `stderr_tail_text` so no spurious marker is added and the
+            // real first line is preserved.
+            Some(limit) if overflowed => stderr_tail_text(&tail, limit),
+            _ => String::from_utf8_lossy(&tail).to_string(),
         };
         Ok::<_, std::io::Error>(text)
     });
@@ -145,8 +158,8 @@ async fn kill_process_group(child: &mut Child) {
         if let Some(pid) = child.id() {
             // SAFETY: `kill(2)` with a negative pid signals the whole process
             // group. We declare the symbol directly rather than depending on the
-            // `libc` crate (Cargo.toml is unchanged) — `kill` is part of the C
-            // runtime that every Unix Rust binary already links.
+            // `libc` crate (no `libc`/external crate dependency is added) — `kill`
+            // is part of the C runtime that every Unix Rust binary already links.
             const SIGKILL: i32 = 9;
             let killed = unsafe { libc_kill(-(pid as i32), SIGKILL) };
             if killed == 0 {
@@ -185,16 +198,27 @@ fn is_executable_busy(error: &std::io::Error) -> bool {
     error.raw_os_error() == Some(ETXTBSY)
 }
 
-fn append_tail(tail: &mut Vec<u8>, chunk: &[u8], limit: usize) {
+/// Append `chunk` to the tail ring buffer, capping it at `limit` bytes. Returns
+/// `true` if any bytes were evicted (i.e. the source overflowed `limit`).
+fn append_tail(tail: &mut Vec<u8>, chunk: &[u8], limit: usize) -> bool {
     tail.extend_from_slice(chunk);
     if tail.len() > limit {
         let excess = tail.len() - limit;
         tail.drain(..excess);
+        true
+    } else {
+        false
     }
 }
 
-/// Render a captured (tail-capped) stderr buffer to text, prefixing a marker and
-/// dropping the leading partial line when truncation occurred.
+/// Render a stderr buffer that overflowed the tail cap to text: prefix a
+/// `[stderr truncated]` marker and drop the leading partial line.
+///
+/// The runtime capture path only calls this when [`append_tail`] reported an
+/// actual eviction, so a false marker can no longer fire at the exact-`limit`
+/// boundary. `bytes.len() >= limit` therefore holds whenever this is reached
+/// from the runner; the comparison also lets the standalone unit test pass an
+/// over-`limit` buffer directly.
 pub(crate) fn stderr_tail_text(bytes: &[u8], limit: usize) -> String {
     let truncated = bytes.len() >= limit;
     let mut text = String::from_utf8_lossy(bytes).to_string();

@@ -12,8 +12,9 @@ User-facing docs live in `README.md`. This file is for working **on** the repo.
 
 | File | Role |
 | --- | --- |
-| `main.rs` | clap dispatch: bare → serve stdio, `setup` → installer; stderr tracing |
-| `config.rs` | `Config::from_env` — all `YTDLP_*` env vars |
+| `main.rs` | clap dispatch: bare → serve stdio, `setup` → installer, `doctor` → diagnostics; stderr tracing |
+| `config.rs` | `Config::from_env_result` — all `YTDLP_*` env vars (the panicking `from_env` is now `#[cfg(test)]`-only) |
+| `doctor.rs` | `ytdl-mcp doctor` — read-only install/diagnostics probe: prints version/git-sha, platform, resolved tool paths, and redacted config presence |
 | `model.rs` | tool input structs + enums (serde + schemars); `Urls` accepts string or array |
 | `mcp.rs` | `rmcp` `ServerHandler` via `#[tool_router]`/`#[tool]`/`#[tool_handler]` — 6 tools (`youtube_download`, `youtube_probe`, `youtube_identify`, `youtube_search`, `youtube_stats`, `youtube_search_ui`) |
 | `service.rs` | orchestration: resolve tools → download → transfer → format payload |
@@ -30,7 +31,7 @@ User-facing docs live in `README.md`. This file is for working **on** the repo.
 | `bootstrap.rs` + `bootstrap/{ytdlp,ffmpeg,http}.rs` | resolve/install yt-dlp + ffmpeg into the cache dir |
 | `urls.rs` | YouTube mix/radio URL cleaning |
 | `setup.rs` | interactive installer; registers into claude/codex/gemini via `mcp add` |
-| `util.rs` | shared `command_error` |
+| `util.rs` | shared `command_error` + the single subprocess runner (`run_capped`) used by the downloader, probe, fingerprinter, and transfer paths |
 
 Tests are sibling `foo_tests.rs` files wired via `#[cfg(test)] #[path = "foo_tests.rs"] mod tests;`.
 
@@ -47,7 +48,7 @@ Tests are sibling `foo_tests.rs` files wired via `#[cfg(test)] #[path = "foo_tes
 
 ```bash
 cargo build --release
-cargo test                                    # 75 tests
+cargo test
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all --check                       # CI gates on this
 

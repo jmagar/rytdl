@@ -7,14 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-In-progress hardening from an ongoing security/robustness review:
+### Security
 
-- Argument-injection `--` end-of-options guard plus scheme validation before
-  URLs reach yt-dlp.
-- `RemotePath` traversal hardening for validated remote specs.
-- Reactor-blocking offload for `youtube_identify` so fingerprinting/lookups do
+- Validate tool-call URLs as `http`/`https` and pass every yt-dlp positional
+  after a `--` end-of-options separator, so a `-`-prefixed value can't be parsed
+  as a flag.
+- Harden `RemotePath` against traversal for validated remote specs.
+
+### Added
+
+- `ytdl-mcp doctor` subcommand: a read-only diagnostic report (version, git SHA,
+  platform, resolved tool paths, and redacted config presence) for triaging a
+  broken install.
+- Embed the build's git SHA in `server_info`.
+
+### Changed
+
+- Replace the download payload with a typed `DownloadPayload` plus a
+  `DownloadStatus` enum, and the `urls` input with a validated `Urls` newtype.
+- Offload `youtube_identify` fingerprinting/lookups off the reactor so they do
   not block the async runtime.
-- CI SHA-256 pinning.
+- Rotate the JSONL history ledger with file locking.
+
+### CI / Supply chain
+
+- Pin GitHub Actions to commit SHAs and add `cargo-audit`, CodeQL, build
+  provenance, and a Windows cross-build smoke test.
+- Scan the container image with Trivy and pin its base image by digest.
 
 ## [0.7.0] - 2026-06-15
 

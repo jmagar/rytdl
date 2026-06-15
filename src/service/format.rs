@@ -59,10 +59,23 @@ pub(crate) struct DownloadDestination {
     pub destination: String,
 }
 
+/// Per-item terminal status. Serializes to the exact lowercase strings the
+/// previous `&'static str` field emitted (`"ok"`/`"partial"`/`"skipped"`/
+/// `"failed"`), so the JSON output stays byte-identical — but the contract is
+/// now closed over a fixed set of variants instead of being stringly-typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DownloadStatus {
+    Ok,
+    Partial,
+    Skipped,
+    Failed,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct DownloadItem {
     pub url: String,
-    pub status: &'static str,
+    pub status: DownloadStatus,
     pub title: Option<String>,
     pub video_id: Option<String>,
     pub duration: Option<f64>,
@@ -211,12 +224,12 @@ pub(crate) fn download_payload(
     .expect("download payload serializes")
 }
 
-fn item_status(result: &ItemResult) -> &'static str {
+fn item_status(result: &ItemResult) -> DownloadStatus {
     match (result.error.is_some(), result.files.is_empty()) {
-        (true, true) => "failed",
-        (true, false) => "partial",
-        (false, true) => "skipped",
-        (false, false) => "ok",
+        (true, true) => DownloadStatus::Failed,
+        (true, false) => DownloadStatus::Partial,
+        (false, true) => DownloadStatus::Skipped,
+        (false, false) => DownloadStatus::Ok,
     }
 }
 

@@ -65,13 +65,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 lofty = "0.24.0"
 
 # Central lint policy. Conservative on purpose: CI gates on `clippy -D warnings`,
-# so these must not turn currently-clean code into errors.
-#   - `unsafe_code` stays at the default level (NOT `forbid`) because util.rs has a
-#     small `extern "C"` FFI `kill` declaration that requires `unsafe`.
-#   - clippy `all = "warn"` matches the default clippy lint group at warn level,
-#     i.e. the same set CI already enforces — no new lints are introduced.
-[lints.rust]
-
+# so these must not turn currently-clean code into errors. `clippy all = "warn"`
+# matches the default clippy lint group at warn level, i.e. the same set CI
+# already enforces — no new lints are introduced. (`unsafe_code` is deliberately
+# left at its default level rather than `forbid`, because util.rs has a small
+# `extern "C"` FFI `kill` declaration that requires `unsafe`.)
 [lints.clippy]
 all = "warn"
 

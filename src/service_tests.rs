@@ -121,6 +121,56 @@ async fn run_download_json_appends_history_entry_with_destination_and_files() {
     assert_eq!(entry["items"][0]["files"][0]["kind"], "video");
 }
 
+/// TA-1: the C1 reactor-blocking offload. `run_download` performs blocking work
+/// (archive/staging `std::fs` prep, tool resolution) that must be moved off the
+/// reactor via `spawn_blocking`. This drives the full path on a SINGLE-THREADED
+/// (`current_thread`) runtime and asserts it COMPLETES within a tight timeout.
+///
+/// This is an INDIRECT proxy for "blocking work is offloaded": if a regression
+/// moved a genuinely-blocking call back inline onto the single reactor thread —
+/// such that it blocks while the runtime also needs that thread to drive the
+/// spawned ssh/rsync child-process futures to completion — the future would
+/// stall and the timeout would fire fast instead of the suite hanging.
+#[tokio::test(flavor = "current_thread")]
+async fn run_download_completes_on_single_threaded_runtime() {
+    let _guard = path_lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    let staging = dir.path().join("staging");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    let fake = write_fake_runtime(&bin);
+
+    let _path = PathOverride::prepend(bin.clone());
+
+    let mut cfg = test_config();
+    cfg.ytdlp_path = Some(fake.ytdlp.display().to_string());
+    cfg.ffmpeg_path = Some(fake.ffmpeg.display().to_string());
+    cfg.staging_dir = Some(staging.display().to_string());
+
+    let input = DownloadInput {
+        mode: DownloadMode::Video,
+        remote: Some("media".into()),
+        dest_path: Some("/audio".into()),
+        video_dest_path: Some("/video".into()),
+        response_format: ResponseFormat::Json,
+        ..download_input(Urls::One("https://www.youtube.com/watch?v=abc123".into()))
+    };
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_download(&Arc::new(cfg), &ToolsCache::default(), input),
+    )
+    .await
+    .expect("run_download must complete; a hang means blocking work landed back on the reactor")
+    .expect("download should succeed with the fake runtime");
+
+    let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(payload["transferred"], true);
+    assert_eq!(payload["total_files"], 1);
+}
+
 #[tokio::test]
 async fn run_download_json_reports_history_error_without_failing_download() {
     let _guard = path_lock().await;

@@ -23,11 +23,16 @@ fn audio_format_properties() {
 
 #[test]
 fn urls_accepts_single_string_or_array() {
+    // `Urls` deserializes the string-or-array shape and only exposes the
+    // validating extractor; both forms round-trip through it.
     let one: Urls = serde_json::from_str(r#""https://x/v=1""#).unwrap();
-    assert_eq!(one.into_vec(), vec!["https://x/v=1"]);
+    assert_eq!(one.into_validated_vec().unwrap(), vec!["https://x/v=1"]);
 
-    let many: Urls = serde_json::from_str(r#"["a","b"]"#).unwrap();
-    assert_eq!(many.into_vec(), vec!["a", "b"]);
+    let many: Urls = serde_json::from_str(r#"["https://a","https://b"]"#).unwrap();
+    assert_eq!(
+        many.into_validated_vec().unwrap(),
+        vec!["https://a", "https://b"]
+    );
 }
 
 #[test]
@@ -54,14 +59,27 @@ fn urls_into_validated_vec_rejects_non_http_and_flaglike_values() {
     assert!(err.contains("only http:// and https://"));
 
     // Non-http(s) schemes are rejected too.
-    assert!(Urls::One("file:///etc/passwd".into())
+    assert!(Urls(OneOrMany::One("file:///etc/passwd".into()))
         .into_validated_vec()
         .is_err());
-    assert!(Urls::One("-o/tmp/x".into()).into_validated_vec().is_err());
+    assert!(Urls(OneOrMany::One("-o/tmp/x".into()))
+        .into_validated_vec()
+        .is_err());
 
     // One bad entry in a list fails the whole batch.
     let mixed: Urls = serde_json::from_str(r#"["https://ok.example/v","--exec=bad"]"#).unwrap();
     assert!(mixed.into_validated_vec().is_err());
+}
+
+#[test]
+fn urls_into_validated_vec_trims_surrounding_whitespace() {
+    // CR-2: a leading-space URL validates but the trimmed form is what reaches
+    // yt-dlp, so the space can't be misparsed downstream.
+    let padded: Urls = serde_json::from_str(r#""  https://example.com/v=1  ""#).unwrap();
+    assert_eq!(
+        padded.into_validated_vec().unwrap(),
+        vec!["https://example.com/v=1"]
+    );
 }
 
 #[test]
@@ -85,7 +103,7 @@ fn download_input_applies_defaults() {
     assert!(!input.keep_local);
     assert!(!input.use_archive);
     assert_eq!(input.response_format, ResponseFormat::Markdown);
-    assert_eq!(input.urls.into_vec(), vec!["https://x"]);
+    assert_eq!(input.urls.into_validated_vec().unwrap(), vec!["https://x"]);
 }
 
 #[test]

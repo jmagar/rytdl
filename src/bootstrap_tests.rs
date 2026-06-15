@@ -163,6 +163,47 @@ fn verify_pin_cached_is_noop_when_unset() {
 }
 
 #[test]
+fn resolve_no_download_returns_found_for_valid_override() {
+    let dir = tempfile::tempdir().unwrap();
+    let tool = dir.path().join("yt-dlp");
+    std::fs::write(&tool, b"binary").unwrap();
+    let override_path = tool.display().to_string();
+
+    let resolved = resolve_no_download(Some(&override_path), "YTDLP_PATH", "yt-dlp").unwrap();
+
+    match resolved {
+        ResolvedTool::Found(p) => assert_eq!(p, tool),
+        other => panic!("expected Found, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_no_download_errors_on_missing_override() {
+    // An explicit override pointing at a nonexistent file is a hard error,
+    // mirroring the real resolver — the user asked for a specific binary that
+    // isn't there.
+    let r = resolve_no_download(Some("/no/such/binary/xyz"), "YTDLP_PATH", "yt-dlp");
+    assert!(r.is_err());
+}
+
+#[test]
+fn resolve_no_download_would_bootstrap_when_nothing_present() {
+    // No override, and a bin name that is neither on PATH nor in the cache dir,
+    // so the only possible outcome is WouldBootstrap (no network, no download).
+    let resolved = resolve_no_download(
+        None,
+        "YTDLP_PATH",
+        "ytdl-mcp-definitely-not-a-real-binary-xyz",
+    )
+    .unwrap();
+
+    assert!(
+        matches!(resolved, ResolvedTool::WouldBootstrap),
+        "expected WouldBootstrap, got {resolved:?}"
+    );
+}
+
+#[test]
 fn ensure_ytdlp_enforces_sha256_pin_for_override() {
     let dir = tempfile::tempdir().unwrap();
     let ytdlp = dir.path().join(exe_name("yt-dlp"));

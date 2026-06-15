@@ -128,6 +128,38 @@ fn search_query_spec_uses_ytsearch_limit_prefix() {
 }
 
 #[test]
+fn search_spec_is_placed_immediately_after_end_of_options_separator() {
+    // `search_youtube` feeds the search positional as `cmd.arg("--").arg(search_spec(..))`.
+    // Mirror that exact construction and lock the invariant that `--` immediately
+    // precedes the `ytsearch{N}:` spec, so the end-of-options guard on the search
+    // path can never silently regress (a stray flag between them, or the spec
+    // landing in the options region, would be parsed as an option by yt-dlp).
+    let spec = super::search_spec("--exec=touch /tmp/pwned", 5);
+    assert!(
+        spec.starts_with("ytsearch5:"),
+        "spec must carry the ytsearch{{N}}: prefix: {spec:?}"
+    );
+
+    // The argv tail as built by `search_youtube`: end-of-options, then the spec.
+    let argv = ["--".to_string(), spec.clone()];
+    let spec_idx = argv
+        .iter()
+        .position(|a| a.starts_with("ytsearch"))
+        .expect("argv must contain the ytsearch spec");
+    assert!(spec_idx > 0, "spec must not be the first argv element");
+    assert_eq!(
+        argv[spec_idx - 1],
+        "--",
+        "`--` must immediately precede the ytsearch{{N}}: spec"
+    );
+    assert_eq!(
+        argv.last().map(String::as_str),
+        Some(spec.as_str()),
+        "spec must be the final argv element"
+    );
+}
+
+#[test]
 fn common_args_preserve_source_metadata_sidecars() {
     let tools = Tools {
         ytdlp: "yt-dlp".into(),
@@ -234,6 +266,16 @@ fn print_line_parser_handles_well_formed_and_malformed_lines() {
     assert_eq!(
         super::parse_print_line(&good),
         Some(("id1", "Title", "Uploader", "215", "/tmp/out.mp3"))
+    );
+
+    // Pin one fixture to the literal Unit Separator byte (U+001F) rather than
+    // `super::SEP`, so this locks the wire-format contract with yt-dlp's
+    // `--print` output: if `SEP` itself ever changed, the parser and this test
+    // would no longer move together and this assertion would catch the drift.
+    let literal = "id2\x1fTitle 2\x1fUploader 2\x1f120\x1f/tmp/out2.mp3";
+    assert_eq!(
+        super::parse_print_line(literal),
+        Some(("id2", "Title 2", "Uploader 2", "120", "/tmp/out2.mp3"))
     );
 
     // Wrong field count (too few / too many) is skipped gracefully.

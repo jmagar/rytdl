@@ -113,32 +113,78 @@ impl OneOrMany {
 }
 
 /// Accept either a single URL string or a list of URL strings.
-pub type Urls = OneOrMany;
+///
+/// A distinct newtype (not a `OneOrMany` alias) so the only way to extract the
+/// values is [`Urls::into_validated_vec`], which enforces the http(s) backstop.
+/// There is deliberately no public unvalidated extractor on `Urls`: a URL caller
+/// cannot reach the yt-dlp subprocess without passing validation, and that is a
+/// compile-time guarantee rather than a naming convention. `#[serde(transparent)]`
+/// keeps the wire shape (string-or-array) and the generated JSON schema identical
+/// to the bare `OneOrMany` — schemars reads `transparent` from the serde attr and
+/// delegates to `OneOrMany`'s `string | array` schema.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct Urls(OneOrMany);
 
 /// Accept either a single local file path string or a list of paths.
-pub type Paths = OneOrMany;
+///
+/// Local paths are not URLs, so they get a plain [`Paths::into_vec`] with no
+/// scheme check — and crucially they do NOT expose `into_validated_vec`, so the
+/// URL backstop can never be wrongly applied to (or skipped for) local files.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct Paths(OneOrMany);
 
 impl Urls {
     /// Validate that every entry is a well-formed `http`/`https` URL before it
-    /// reaches the yt-dlp subprocess. Defense-in-depth backstop for the `--`
-    /// end-of-options guard at the call sites (F2): rejects values such as
-    /// `--exec=...`, `-o /path`, or non-http(s) schemes that yt-dlp would
-    /// otherwise interpret as flags or unexpected inputs.
+    /// reaches the yt-dlp subprocess, returning the trimmed values. This is the
+    /// ONLY extractor on `Urls`: there is no unvalidated path, so the backstop is
+    /// not opt-in. Defense-in-depth for the `--` end-of-options guard at the
+    /// yt-dlp call sites (F2): rejects values such as `--exec=...`, `-o /path`, or
+    /// non-http(s) schemes that yt-dlp would otherwise interpret as flags.
     ///
-    /// NOTE: this is `into_vec` plus validation under a distinct name so it can
-    /// be wired in without touching the existing `into_vec` callers. service.rs
-    /// must call this in place of `into_vec` to enforce the backstop.
+    /// The download and probe paths in `service.rs` already call this; the local
+    /// `paths` path (identify) uses [`Paths::into_vec`] instead, as those are
+    /// files, not URLs.
     pub fn into_validated_vec(self) -> anyhow::Result<Vec<String>> {
-        let urls = self.into_vec();
-        for url in &urls {
-            validate_http_url(url)?;
-        }
-        Ok(urls)
+        self.0
+            .into_vec()
+            .into_iter()
+            .map(|url| validate_http_url(&url))
+            .collect()
+    }
+
+    /// Construct from a single URL. Named to read like the former `Urls::One`
+    /// enum variant so existing test construction sites keep working after the
+    /// newtype refactor. Construction does not validate; [`Urls::into_validated_vec`]
+    /// is the single validation gate.
+    #[cfg(test)]
+    #[allow(non_snake_case)]
+    pub fn One(url: String) -> Self {
+        Urls(OneOrMany::One(url))
     }
 }
 
-/// Reject anything that is not an `http`/`https` URL with a clear error.
-fn validate_http_url(value: &str) -> anyhow::Result<()> {
+impl Paths {
+    /// Extract the local file paths. No scheme validation: these are local files,
+    /// not URLs.
+    pub fn into_vec(self) -> Vec<String> {
+        self.0.into_vec()
+    }
+
+    /// Construct from a single path. Named to read like the former `Paths::One`
+    /// enum variant so existing test construction sites keep working after the
+    /// newtype refactor.
+    #[cfg(test)]
+    #[allow(non_snake_case)]
+    pub fn One(path: String) -> Self {
+        Paths(OneOrMany::One(path))
+    }
+}
+
+/// Reject anything that is not an `http`/`https` URL with a clear error, and on
+/// success return the trimmed value so a leading-space URL never reaches yt-dlp.
+fn validate_http_url(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
     let lower = trimmed.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
@@ -152,7 +198,7 @@ fn validate_http_url(value: &str) -> anyhow::Result<()> {
             .next()
             .is_some_and(|c| !matches!(c, '/' | '?' | '#'))
         {
-            return Ok(());
+            return Ok(trimmed.to_string());
         }
     }
     anyhow::bail!(

@@ -34,7 +34,9 @@ use format::{
 /// representative payload without reaching into the private module path.
 pub(crate) use format::DownloadPayload;
 #[cfg(test)]
-pub(crate) use format::{download_payload, render_download_markdown, DownloadFile, DownloadItem};
+pub(crate) use format::{
+    download_payload, render_download_markdown, DownloadFile, DownloadItem, DownloadStatus,
+};
 
 #[cfg(test)]
 pub(crate) use format::render_search_for_test;

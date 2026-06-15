@@ -199,17 +199,21 @@ fn report_config() {
 /// (••••)`) so the reader knows it's populated without ever leaking the value;
 /// an unset value is `not set`. Used for both secrets and plain settings so the
 /// report is uniform and no value is ever printed.
-fn presence<T>(value: &Option<T>) -> &'static str {
+pub(crate) fn presence<T>(value: &Option<T>) -> &'static str {
     match value {
         Some(_) => "set (••••)",
         None => "not set",
     }
 }
 
-fn yes_no(value: bool) -> &'static str {
+pub(crate) fn yes_no(value: bool) -> &'static str {
     if value {
         "yes"
     } else {
         "no"
     }
 }
+
+#[cfg(test)]
+#[path = "doctor_tests.rs"]
+mod tests;
