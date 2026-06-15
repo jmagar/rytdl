@@ -40,6 +40,10 @@ Tests are sibling `foo_tests.rs` files wired via `#[cfg(test)] #[path = "foo_tes
 - **No file over 500 LOC.** Split into a `foo/` dir with submodules instead.
 - **No `mod.rs`** — `foo.rs` declares `mod bar;` resolving to `foo/bar.rs`.
 - **Sibling test files** — `foo_tests.rs` next to `foo.rs`, never inline `mod tests {}`.
+  A large module MAY also carry extra focused test files under its `foo/` submodule
+  dir (e.g. `service/render_tests.rs`, `service/stats_identify_tests.rs`), each wired
+  with its own `#[cfg(test)] #[path = "service/render_tests.rs"] mod render_tests;`,
+  in addition to the canonical sibling `service_tests.rs`.
 - **stdout is the JSON-RPC channel** — ALL logging goes to **stderr**
   (`tracing_subscriber ... .with_writer(std::io::stderr)`). Never print to stdout
   outside the MCP transport, and never forward yt-dlp's captured stdout.

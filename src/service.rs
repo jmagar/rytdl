@@ -5,10 +5,10 @@
 //! `Config`, and resolved tool paths are memoized per-process via [`ToolsCache`].
 
 mod format;
+mod plex_tracks;
+mod retag;
 
 use anyhow::{bail, Result};
-use serde_json::json;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -17,7 +17,6 @@ use tokio::sync::OnceCell;
 use crate::bootstrap;
 use crate::config::Config;
 use crate::downloader::{self, FetchOptions, ItemResult};
-use crate::identify::IdentifyPayload;
 use crate::model::{
     DownloadInput, IdentifyInput, ProbeInput, SearchInput, SearchPayload, StatsInput,
 };
@@ -27,6 +26,8 @@ use format::{
     build_download_payload, probe_payload, render, render_download, render_probe_markdown,
     render_search_markdown,
 };
+use plex_tracks::plex_track_inputs;
+use retag::auto_retag_audio;
 
 /// Re-exported so the history ledger (`crate::history`) can consume the typed
 /// download payload directly — `format` itself is a private submodule. The
@@ -40,6 +41,11 @@ pub(crate) use format::{
 
 #[cfg(test)]
 pub(crate) use format::render_search_for_test;
+
+/// Re-exported for `service_tests.rs`, which drives the retag summary logic
+/// through the test-injection seam without a live AcoustID round-trip.
+#[cfg(test)]
+pub(crate) use retag::auto_retag_audio_paths_for_test;
 
 /// Process-lifetime cache of the resolved external tools. Bootstrap resolution
 /// (`which`, file checks, the exclusive cross-process lockfile, and any first-run
@@ -134,7 +140,7 @@ pub async fn run_download(
         // Archive hit / genuinely empty — succeed with a no-op summary.
         let mut payload = build_download_payload(&results, &remote, &[], true, None, None);
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
-        record_history(cfg, input.mode, &mut payload);
+        record_history(cfg, input.mode, &mut payload).await;
         return Ok(render_download(&payload, input.response_format));
     }
 
@@ -202,7 +208,7 @@ pub async fn run_download(
     if transferred {
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
     }
-    record_history(cfg, input.mode, &mut payload);
+    record_history(cfg, input.mode, &mut payload).await;
     Ok(render_download(&payload, input.response_format))
 }
 
@@ -214,104 +220,6 @@ async fn transfer_kind(
 ) -> Result<()> {
     crate::transfer::ensure_remote_dir(remote, dest, ssh_opts).await?;
     crate::transfer::transfer(dir, remote, dest, ssh_opts).await
-}
-
-async fn auto_retag_audio(cfg: &Arc<Config>, results: &[ItemResult]) -> Option<serde_json::Value> {
-    let paths = downloaded_audio_paths(results);
-    auto_retag_audio_paths(cfg, paths, |cfg, paths| async move {
-        crate::identify::identify_files(&cfg, paths, true).await
-    })
-    .await
-}
-
-fn downloaded_audio_paths(results: &[ItemResult]) -> Vec<String> {
-    results
-        .iter()
-        .flat_map(|result| &result.files)
-        .filter(|file| file.kind == "audio")
-        .map(|file| file.path.display().to_string())
-        .collect()
-}
-
-async fn auto_retag_audio_paths<F, Fut>(
-    cfg: &Arc<Config>,
-    paths: Vec<String>,
-    identify: F,
-) -> Option<serde_json::Value>
-where
-    F: FnOnce(Arc<Config>, Vec<String>) -> Fut,
-    Fut: Future<Output = Result<IdentifyPayload>>,
-{
-    if paths.is_empty()
-        || cfg
-            .acoustid_client_key
-            .as_deref()
-            .filter(|key| !key.trim().is_empty())
-            .is_none()
-    {
-        return None;
-    }
-
-    let attempted = paths.len();
-    match identify(Arc::clone(cfg), paths).await {
-        Ok(payload) => Some(auto_retag_summary(&payload, attempted)),
-        Err(error) => Some(json!({
-            "attempted": attempted,
-            "matched": 0,
-            "written": 0,
-            "errors": 1,
-            "error": error.to_string(),
-        })),
-    }
-}
-
-#[cfg(test)]
-pub(crate) async fn auto_retag_audio_paths_for_test<F, Fut>(
-    cfg: &Arc<Config>,
-    paths: Vec<String>,
-    identify: F,
-) -> Option<serde_json::Value>
-where
-    F: FnOnce(Arc<Config>, Vec<String>) -> Fut,
-    Fut: Future<Output = Result<IdentifyPayload>>,
-{
-    auto_retag_audio_paths(cfg, paths, identify).await
-}
-
-fn auto_retag_summary(payload: &IdentifyPayload, attempted: usize) -> serde_json::Value {
-    let matched = payload
-        .results
-        .iter()
-        .filter(|result| result.retag_preview.is_some())
-        .count();
-    let written = payload
-        .results
-        .iter()
-        .filter(|result| {
-            result
-                .tag_write
-                .as_ref()
-                .map(|write| write.written)
-                .unwrap_or(false)
-        })
-        .count();
-    let errors = payload
-        .results
-        .iter()
-        .filter(|result| {
-            result.error.is_some()
-                || result.retag_preview_error.is_some()
-                || result.tag_write_error.is_some()
-        })
-        .count();
-
-    json!({
-        "attempted": attempted,
-        "matched": matched,
-        "written": written,
-        "skipped": attempted.saturating_sub(matched),
-        "errors": errors,
-    })
 }
 
 /// BP-H2: prepare the archive + staging directories off the reactor. Both
@@ -463,10 +371,33 @@ pub async fn run_search(
     ))
 }
 
-fn record_history(cfg: &Config, mode: crate::model::DownloadMode, payload: &mut DownloadPayload) {
-    if let Err(error) = crate::history::append_download(cfg, mode, payload) {
-        tracing::warn!(%error, "failed to append download history");
-        payload.history_error = Some(error.to_string());
+/// Append the download to the persistent ledger, off the reactor.
+///
+/// `append_download` does synchronous `std::fs` I/O (directory create + JSONL
+/// append), so it is offloaded via `spawn_blocking` — mirroring `prepare_dirs`
+/// and `record_plex_playlist`. A cheap clone of the payload moves into the
+/// closure; on failure (best-effort) the error is recorded back onto the live
+/// payload so the response still reports `history_error`.
+async fn record_history(
+    cfg: &Arc<Config>,
+    mode: crate::model::DownloadMode,
+    payload: &mut DownloadPayload,
+) {
+    let cfg = Arc::clone(cfg);
+    let snapshot = payload.clone();
+    let result =
+        tokio::task::spawn_blocking(move || crate::history::append_download(&cfg, mode, &snapshot))
+            .await;
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            tracing::warn!(%error, "failed to append download history");
+            payload.history_error = Some(error.to_string());
+        }
+        Err(error) => {
+            tracing::warn!(%error, "download history task failed");
+            payload.history_error = Some(error.to_string());
+        }
     }
 }
 
@@ -492,7 +423,7 @@ async fn record_plex_playlist(
     .await
     {
         Ok(Ok(update)) => {
-            payload.plex_playlist = Some(serde_json::to_value(update).unwrap_or_default());
+            payload.plex_playlist = Some(update);
         }
         Ok(Err(error)) => {
             tracing::warn!(%error, "failed to update Plex playlist");
@@ -503,41 +434,6 @@ async fn record_plex_playlist(
             payload.plex_playlist_error = Some(error.to_string());
         }
     }
-}
-
-/// Map download results into the Plex-owned [`PlexTrackInput`] DTO.
-///
-/// One DTO per downloaded *audio* file, in result/file order. The display title
-/// is resolved from the file's own title, falling back to the item title, then
-/// the file stem; files whose resolved title is empty are dropped. The uploader
-/// falls back from the file's uploader to the item's. De-duplication of equal
-/// (title, uploader) pairs is left to the Plex layer so this mapper stays a pure
-/// projection of the downloader model.
-fn plex_track_inputs(results: &[ItemResult]) -> Vec<crate::plex::PlexTrackInput> {
-    let mut tracks = Vec::new();
-    for result in results {
-        for file in &result.files {
-            if file.kind != "audio" {
-                continue;
-            }
-            let title = file
-                .title
-                .as_deref()
-                .or(result.title.as_deref())
-                .or_else(|| file.path.file_stem().and_then(|s| s.to_str()))
-                .unwrap_or("")
-                .trim();
-            if title.is_empty() {
-                continue;
-            }
-            let uploader = file.uploader.clone().or_else(|| result.uploader.clone());
-            tracks.push(crate::plex::PlexTrackInput {
-                title: title.to_string(),
-                uploader,
-            });
-        }
-    }
-    tracks
 }
 
 pub fn run_stats(cfg: &Config, input: StatsInput) -> Result<String> {

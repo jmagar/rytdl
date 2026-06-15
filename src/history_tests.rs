@@ -379,3 +379,76 @@ fn poison_line_does_not_wedge_rotation() {
     assert_eq!(stats["skipped_entries"].as_u64(), Some(0));
     assert!(text.contains("\"uploader\":\"Artist P\""));
 }
+
+#[test]
+fn torn_partial_write_does_not_drop_the_valid_entry_glued_after_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("downloads.jsonl");
+
+    // Reproduce a crash that left a torn partial write: a valid line, then raw
+    // invalid-UTF-8 bytes terminated by `\n` (the poison fragment), then another
+    // valid line on the very next physical line. With `BufRead::lines()` the
+    // invalid-UTF-8 region could decode the poison fragment AND the valid line
+    // after it as a single `Err`, dropping a real entry. The physical-line reader
+    // (`read_until`) must drop ONLY the poison fragment and keep both neighbours.
+    //
+    // The torn region is placed near the END of the file so both bracketing
+    // markers fall inside the retained `MAX_HISTORY_ENTRIES` tail after rotation.
+    let total = ROTATE_TRIGGER_ENTRIES + 10;
+    let poison_at = total - 3; // a few lines from the end
+    let marker = |seq: usize| {
+        let entry = json!({
+            "timestamp": "2024-01-01T00:00:00Z",
+            "mode": "audio",
+            "seq": seq,
+            "total_files": 0,
+            "total_bytes": 0,
+            "items": [],
+        });
+        serde_json::to_string(&entry).unwrap()
+    };
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        for i in 0..total {
+            f.write_all(marker(i).as_bytes()).unwrap();
+            f.write_all(b"\n").unwrap();
+            // Immediately after the line at `poison_at`, splice a torn fragment:
+            // invalid UTF-8 bytes + a newline, directly abutting the next valid
+            // line (seq == poison_at + 1).
+            if i == poison_at {
+                f.write_all(&[0xff, 0xfe, 0x80, 0xc0, b'\n']).unwrap();
+            }
+        }
+    }
+
+    let cfg = config_with_history(&path);
+    append_download(&cfg, DownloadMode::Audio, &sample_payload("Artist T", true)).unwrap();
+
+    // The ledger is bounded and now clean UTF-8 (the poison fragment was dropped).
+    let contents = std::fs::read(&path).unwrap();
+    let line_count = contents.iter().filter(|&&b| b == b'\n').count();
+    assert!(
+        line_count <= MAX_HISTORY_ENTRIES + 1,
+        "rotation did not bound the ledger: {line_count} lines"
+    );
+    let text = String::from_utf8(contents).expect("poison fragment was not dropped");
+
+    // BOTH valid lines bracketing the poison survived: the one just before it and
+    // the one glued immediately after it. The prior `lines()` behaviour would have
+    // lost the latter along with the poison fragment.
+    let before = format!("\"seq\":{}", poison_at);
+    let after = format!("\"seq\":{}", poison_at + 1);
+    assert!(
+        text.contains(&before),
+        "valid line before the poison fragment was dropped"
+    );
+    assert!(
+        text.contains(&after),
+        "valid line glued after the poison fragment was dropped"
+    );
+
+    // Stats parse the trimmed ledger cleanly and the appended record is present.
+    let stats = stats_payload(&cfg, 0).unwrap();
+    assert_eq!(stats["skipped_entries"].as_u64(), Some(0));
+    assert!(text.contains("\"uploader\":\"Artist T\""));
+}

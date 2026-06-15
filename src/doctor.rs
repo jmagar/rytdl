@@ -10,7 +10,7 @@
 //!
 //! Secret hygiene: this report only ever prints *presence* (`set` / `not set`),
 //! never any token, key, or credential value. The redaction discipline lives in
-//! [`presence`]/[`presence_pair`]; nothing in this module formats a secret's
+//! [`presence`]/[`yes_no`]; nothing in this module formats a secret's
 //! contents.
 
 use anyhow::Result;

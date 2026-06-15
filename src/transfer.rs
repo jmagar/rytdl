@@ -8,15 +8,19 @@
 use std::path::Path;
 
 use anyhow::{bail, Result};
-use std::process::Output;
 
 use tokio::process::Command;
 
-use crate::util::{command_error, run_output};
+use crate::util::{command_error, run_capped};
 
 #[cfg(test)]
 #[path = "transfer_tests.rs"]
 mod tests;
+
+/// Tail-cap applied to transfer subprocess (ssh/rsync/scp) stderr, mirroring the
+/// downloader's 16 KiB bound so a misbehaving remote shell can't stream
+/// unbounded diagnostics into memory.
+const STDERR_CAP: usize = 16 * 1024;
 
 /// Typed failures for the transfer input-validation boundary (`RemoteSpec` /
 /// `RemotePath`). Hand-rolled `Error`/`Display` (the crate does not depend on
@@ -64,6 +68,25 @@ impl std::fmt::Display for TransferValidationError {
 
 impl std::error::Error for TransferValidationError {}
 
+/// Shared leading check for both `RemoteSpec` and `RemotePath`: reject an
+/// empty/whitespace-only value. Both validators run this first and in the same
+/// position, so consolidating it here keeps the two paths from drifting.
+///
+/// The leading-dash check is intentionally NOT folded in: `RemoteSpec` rejects a
+/// leading dash *before* its bad-chars check while `RemotePath` rejects control
+/// characters *before* its leading-dash check, so a single shared ordering would
+/// change which variant wins for a value that is both control-bearing and
+/// dash-led. Each caller keeps its own leading-dash check to preserve that.
+fn reject_empty(
+    raw: &str,
+    field: &'static str,
+) -> std::result::Result<(), TransferValidationError> {
+    if raw.trim().is_empty() {
+        return Err(TransferValidationError::Empty { field });
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteSpec(String);
 
@@ -75,9 +98,7 @@ impl RemoteSpec {
     fn parse_typed(raw: impl Into<String>) -> std::result::Result<Self, TransferValidationError> {
         const FIELD: &str = "SSH remote";
         let raw = raw.into();
-        if raw.trim().is_empty() {
-            return Err(TransferValidationError::Empty { field: FIELD });
-        }
+        reject_empty(&raw, FIELD)?;
         if raw.starts_with('-') {
             return Err(TransferValidationError::LeadingDash { field: FIELD });
         }
@@ -113,9 +134,7 @@ impl RemotePath {
     fn parse_typed(raw: impl Into<String>) -> std::result::Result<Self, TransferValidationError> {
         const FIELD: &str = "remote destination path";
         let raw = raw.into();
-        if raw.trim().is_empty() {
-            return Err(TransferValidationError::Empty { field: FIELD });
-        }
+        reject_empty(&raw, FIELD)?;
         if raw.chars().any(char::is_control) {
             return Err(TransferValidationError::BadChars { field: FIELD });
         }
@@ -180,9 +199,9 @@ pub async fn ensure_remote_dir(
     let command = remote_mkdir_command(dest_path);
     let mut cmd = Command::new("ssh");
     cmd.args(ssh_opts).arg(remote.as_str()).arg(&command);
-    let out = command_output(&mut cmd).await?;
+    let out = run_capped(&mut cmd, None, Some(STDERR_CAP)).await?;
     if !out.status.success() {
-        let detail = command_error(&out);
+        let detail = command_error((out.stderr.as_str(), out.stdout.as_slice()));
         let remote = remote.as_str();
         let dest_path = dest_path.as_str();
         bail!(
@@ -225,12 +244,12 @@ async fn rsync(
     cmd.args(["-av", "--partial", "--human-readable", "-s", "-e", &ssh_cmd])
         .arg(&src)
         .arg(&target);
-    let out = command_output(&mut cmd).await?;
+    let out = run_capped(&mut cmd, None, Some(STDERR_CAP)).await?;
     if !out.status.success() {
         bail!(
             "rsync failed (exit {:?}): {}",
             out.status.code(),
-            command_error(&out)
+            command_error((out.stderr.as_str(), out.stdout.as_slice()))
         );
     }
     Ok(())
@@ -258,12 +277,12 @@ async fn scp(
         cmd.arg(e);
     }
     cmd.arg(&target);
-    let out = command_output(&mut cmd).await?;
+    let out = run_capped(&mut cmd, None, Some(STDERR_CAP)).await?;
     if !out.status.success() {
         bail!(
             "scp failed (exit {:?}): {}",
             out.status.code(),
-            command_error(&out)
+            command_error((out.stderr.as_str(), out.stdout.as_slice()))
         );
     }
     Ok(())
@@ -279,14 +298,6 @@ fn rsync_remote_shell_command(ssh_opts: &[String]) -> String {
         .chain(ssh_opts.iter().map(|arg| shell_quote_if_needed(arg)))
         .collect::<Vec<_>>()
         .join(" ")
-}
-
-/// Run a transfer subprocess (ssh/rsync/scp) through the shared runner. The
-/// caller in `service.rs` applies its own external timeout around this future,
-/// so no internal timeout is passed (`None`); the shared runner still gives us
-/// `ETXTBSY` retry, process-group placement, and `kill_on_drop`.
-async fn command_output(cmd: &mut Command) -> Result<Output> {
-    run_output(cmd).await
 }
 
 fn shell_quote(s: &str) -> String {

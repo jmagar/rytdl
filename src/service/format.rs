@@ -41,11 +41,14 @@ pub(crate) struct DownloadPayload {
     pub failed_items: usize,
     pub items: Vec<DownloadItem>,
     // Side-channels attached after the core build in service.rs. Only present
-    // when the corresponding step ran/failed, hence skip-if-none.
+    // when the corresponding step ran/failed, hence skip-if-none. Both are typed
+    // (not `serde_json::Value`): `RetagSummary` and `PlexPlaylistUpdate` own the
+    // schema, so their serialized JSON stays byte-compatible with the previous
+    // hand-built maps while field renames become compile errors.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata_retag: Option<serde_json::Value>,
+    pub metadata_retag: Option<super::retag::RetagSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub plex_playlist: Option<serde_json::Value>,
+    pub plex_playlist: Option<crate::plex::PlexPlaylistUpdate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plex_playlist_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

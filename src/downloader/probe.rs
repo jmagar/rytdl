@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use super::run_command;
-use crate::util::json_str as str_field;
+use crate::util::json_str;
 
 #[derive(Debug, Clone, Default)]
 pub struct ProbeResult {
@@ -84,15 +84,15 @@ pub async fn probe(
             .and_then(|c| c.as_u64())
             .map(|c| c as usize)
             .or_else(|| Some(entries.iter().filter(|e| !e.is_null()).count()));
-        r.title = str_field(&info, "title")
-            .or_else(|| first_non_null.and_then(|e| str_field(e, "playlist")));
-        r.video_id = str_field(&info, "id");
-        r.uploader = str_field(&info, "uploader")
-            .or_else(|| first_non_null.and_then(|e| str_field(e, "uploader")));
+        r.title = json_str(&info, "title")
+            .or_else(|| first_non_null.and_then(|e| json_str(e, "playlist")));
+        r.video_id = json_str(&info, "id");
+        r.uploader = json_str(&info, "uploader")
+            .or_else(|| first_non_null.and_then(|e| json_str(e, "uploader")));
     } else {
-        r.title = str_field(&info, "title");
-        r.video_id = str_field(&info, "id");
-        r.uploader = str_field(&info, "uploader");
+        r.title = json_str(&info, "title");
+        r.video_id = json_str(&info, "id");
+        r.uploader = json_str(&info, "uploader");
         r.duration = info.get("duration").and_then(|d| d.as_f64());
         r.format_count = info
             .get("formats")

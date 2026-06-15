@@ -12,7 +12,7 @@ use tokio::process::Command;
 
 use crate::bootstrap::Tools;
 use crate::model::{AudioFormat, DownloadMode, SearchResultItem, VideoContainer};
-use crate::util::{json_str, run_capped, CommandOutput};
+use crate::util::{command_error, is_http_url, json_str, run_capped, CommandOutput};
 // Re-exported for `downloader_tests.rs`, which exercises the shared
 // tail-truncation logic via this module's `super::*` glob.
 #[cfg(test)]
@@ -229,7 +229,10 @@ async fn run_pass(
     cmd.args(&argv);
     let output = run_command(&mut cmd, timeout).await?;
     if !output.status.success() {
-        bail!("{}", command_error_text(&output.stderr, &output.stdout));
+        bail!(
+            "{}",
+            command_error((output.stderr.as_str(), output.stdout.as_slice()))
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -380,10 +383,6 @@ fn search_result_url(entry: &serde_json::Value) -> Option<String> {
     json_str(entry, "id").map(|id| format!("https://www.youtube.com/watch?v={id}"))
 }
 
-fn is_http_url(value: &str) -> bool {
-    value.starts_with("https://") || value.starts_with("http://")
-}
-
 pub(crate) fn search_spec(query: &str, limit: u32) -> String {
     format!(
         "ytsearch{}:{}",
@@ -415,19 +414,13 @@ pub async fn search_youtube(
 
     let output = run_command(&mut cmd, timeout).await?;
     if !output.status.success() {
-        bail!("{}", command_error_text(&output.stderr, &output.stdout));
+        bail!(
+            "{}",
+            command_error((output.stderr.as_str(), output.stdout.as_slice()))
+        );
     }
 
     parse_search_json(&output.stdout)
-}
-
-fn command_error_text(stderr: &str, stdout: &[u8]) -> String {
-    let err = stderr.trim();
-    if err.is_empty() {
-        String::from_utf8_lossy(stdout).trim().to_string()
-    } else {
-        err.to_string()
-    }
 }
 
 /// Run a yt-dlp subprocess via the shared runner, capping stderr to the last

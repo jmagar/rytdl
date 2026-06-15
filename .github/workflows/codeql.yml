@@ -79,6 +79,7 @@ jobs:
       - name: Run gitleaks
         run: |
           set -euo pipefail
-          # --no-git scans the checked-out tree (all tracked files); fails the
-          # job on any finding so leaked Plex/AcoustID tokens block the build.
-          ./gitleaks detect --source . --no-git --redact -v
+          # Scan the full git history (fetch-depth: 0 above); fails the job on
+          # any finding so leaked Plex/AcoustID tokens block the build, even if
+          # a secret was committed and later removed.
+          ./gitleaks detect --source . --redact -v

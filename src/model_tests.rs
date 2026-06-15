@@ -72,6 +72,25 @@ fn urls_into_validated_vec_rejects_non_http_and_flaglike_values() {
 }
 
 #[test]
+fn urls_into_validated_vec_rejects_embedded_control_characters() {
+    // SEC-F2: a value that passes the scheme + host check but smuggles an interior
+    // control character must be rejected, or it would survive trimming and inject
+    // forged lines into the JSONL ledger / reflected error messages.
+    for evil in [
+        "https://example.com/\nX: y",       // embedded newline
+        "https://example.com/\rX-Injected", // embedded carriage return
+        "https://example.com/\u{0}null",    // embedded NUL
+    ] {
+        let bad = Urls(OneOrMany::One(evil.into()));
+        let err = bad.into_validated_vec().unwrap_err().to_string();
+        assert!(
+            err.contains("control characters"),
+            "expected control-char rejection for {evil:?}, got: {err}"
+        );
+    }
+}
+
+#[test]
 fn urls_into_validated_vec_trims_surrounding_whitespace() {
     // CR-2: a leading-space URL validates but the trimmed form is what reaches
     // yt-dlp, so the space can't be misparsed downstream.

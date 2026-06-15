@@ -7,7 +7,7 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::process::Command;
 
-use crate::util::{json_str as str_field, run_capped};
+use crate::util::{json_str, run_capped};
 
 mod musicbrainz;
 mod tagger;
@@ -299,7 +299,7 @@ pub(crate) fn parse_acoustid_lookup(bytes: &[u8]) -> Result<Vec<IdentifyCandidat
 }
 
 fn result_candidates(result: &Value) -> Vec<IdentifyCandidate> {
-    let acoustid_id = str_field(result, "id").unwrap_or_default();
+    let acoustid_id = json_str(result, "id").unwrap_or_default();
     let score = result["score"].as_f64().unwrap_or(0.0);
     result["recordings"]
         .as_array()
@@ -308,22 +308,22 @@ fn result_candidates(result: &Value) -> Vec<IdentifyCandidate> {
         .map(|recording| IdentifyCandidate {
             acoustid_id: acoustid_id.clone(),
             score,
-            recording_id: str_field(recording, "id"),
-            title: str_field(recording, "title"),
+            recording_id: json_str(recording, "id"),
+            title: json_str(recording, "title"),
             artists: recording["artists"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|artist| str_field(artist, "name"))
+                .filter_map(|artist| json_str(artist, "name"))
                 .collect(),
             release_group: recording["releasegroups"]
                 .as_array()
                 .and_then(|groups| groups.first())
-                .and_then(|group| str_field(group, "title")),
+                .and_then(|group| json_str(group, "title")),
             release_group_type: recording["releasegroups"]
                 .as_array()
                 .and_then(|groups| groups.first())
-                .and_then(|group| str_field(group, "type")),
+                .and_then(|group| json_str(group, "type")),
         })
         .collect()
 }

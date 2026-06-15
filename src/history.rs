@@ -37,6 +37,24 @@ fn history_path(cfg: &Config) -> PathBuf {
         .unwrap_or_else(default_history_path)
 }
 
+/// Build a path that sits *beside* the ledger (same directory) by suffixing its
+/// file name — e.g. `downloads.jsonl` + `.lock` -> `downloads.jsonl.lock`, or
+/// `downloads.jsonl` + `.<pid>.<seq>.tmp` -> `downloads.jsonl.<pid>.<seq>.tmp`.
+/// Keeping the directory shared is what makes the rotation `rename` atomic, and
+/// reusing one builder keeps the lock and temp paths derived identically. If the
+/// ledger has no file name we fall back to the default basename.
+fn ledger_sibling(ledger: &Path, suffix: &str) -> PathBuf {
+    let mut name = ledger
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| OsString::from("downloads.jsonl"));
+    name.push(suffix);
+    match ledger.parent() {
+        Some(parent) => parent.join(name),
+        None => PathBuf::from(name),
+    }
+}
+
 /// Cap on retained ledger entries. Rotation keeps the most recent
 /// `MAX_HISTORY_ENTRIES` lines and drops older ones. This bounds both the
 /// on-disk size and the cost of the `stats_payload` full-file scan (which is
@@ -116,15 +134,7 @@ struct HistoryLock(Option<std::fs::File>);
 
 impl HistoryLock {
     fn acquire(ledger: &Path) -> Self {
-        let mut name = ledger
-            .file_name()
-            .map(|n| n.to_os_string())
-            .unwrap_or_else(|| OsString::from("downloads.jsonl"));
-        name.push(".lock");
-        let lock_path = match ledger.parent() {
-            Some(parent) => parent.join(name),
-            None => PathBuf::from(name),
-        };
+        let lock_path = ledger_sibling(ledger, ".lock");
         match OpenOptions::new()
             .create(true)
             .write(true)
@@ -170,15 +180,7 @@ fn rotation_temp_path(path: &std::path::Path) -> PathBuf {
     let pid = std::process::id();
     // Suffix the existing file name so the temp sits beside the ledger and keeps
     // its directory (e.g. `downloads.jsonl` -> `downloads.jsonl.<pid>.<seq>.tmp`).
-    let mut name = path
-        .file_name()
-        .map(|n| n.to_os_string())
-        .unwrap_or_else(|| OsString::from("downloads.jsonl"));
-    name.push(format!(".{pid}.{seq}.tmp"));
-    match path.parent() {
-        Some(parent) => parent.join(name),
-        None => PathBuf::from(name),
-    }
+    ledger_sibling(path, &format!(".{pid}.{seq}.tmp"))
 }
 
 /// Trim the ledger to the last [`MAX_HISTORY_ENTRIES`] lines if it has grown
@@ -202,32 +204,53 @@ fn rotate_if_needed(path: &std::path::Path) -> Result<()> {
     // Keep only the last MAX_HISTORY_ENTRIES lines in a bounded ring buffer so
     // we never hold the whole (over-cap) file in memory at once.
     //
-    // A single unreadable line (e.g. invalid UTF-8 from a prior corrupted write)
-    // must NOT wedge rotation forever: instead of `?`-aborting on a read error we
-    // drop that line and keep going, so the poison line gets rotated OUT instead
-    // of growing the ledger unbounded. Dropped lines are counted and warned once
-    // below. A dropped line still counts toward `total` (it occupies a physical
-    // line and contributes to file growth), keeping the trigger logic correct.
+    // Read PHYSICAL lines via `read_until(b'\n')` rather than `BufRead::lines()`.
+    // `lines()` yields a single `Err` for an invalid-UTF-8 *region*, which can
+    // span a torn partial write AND the valid append glued after it (a crash can
+    // leave a fragment with no trailing newline immediately followed by the next
+    // entry) — dropping a valid neighbour along with the poison. Splitting on the
+    // physical newline first, then UTF-8-validating each line independently, means
+    // a poison fragment only ever costs its own physical line; a valid entry on
+    // the next physical line always survives.
+    //
+    // A line that is invalid UTF-8 (e.g. from a prior corrupted/torn write) is
+    // dropped instead of aborting rotation, so the poison line gets rotated OUT
+    // rather than growing the ledger unbounded. Dropped lines are counted and
+    // warned once below. A dropped line still counts toward `total` (it occupies a
+    // physical line and contributes to file growth), keeping the trigger correct.
     let mut tail: VecDeque<String> = VecDeque::with_capacity(MAX_HISTORY_ENTRIES + 1);
     let mut total = 0_usize;
     let mut dropped = 0_u64;
-    let mut lines = BufReader::new(file).lines();
+    let mut reader = BufReader::new(file);
+    let mut buf: Vec<u8> = Vec::new();
     loop {
-        match lines.next() {
-            Some(Ok(line)) => {
-                total += 1;
-                tail.push_back(line);
+        buf.clear();
+        let read = reader
+            .read_until(b'\n', &mut buf)
+            .with_context(|| format!("read history file {}", path.display()))?;
+        if read == 0 {
+            break; // EOF
+        }
+        total += 1;
+        // Strip a single trailing newline so retained lines re-serialize exactly
+        // (write_and_swap re-adds the newline). A final line without a trailing
+        // newline keeps all its bytes.
+        if buf.last() == Some(&b'\n') {
+            buf.pop();
+        }
+        match std::str::from_utf8(&buf) {
+            Ok(line) => {
+                tail.push_back(line.to_string());
                 if tail.len() > MAX_HISTORY_ENTRIES {
                     tail.pop_front();
                 }
             }
-            Some(Err(_)) => {
-                // Unreadable line: count it as a dropped entry and continue, so a
-                // poison line is rotated out rather than aborting the rotation.
-                total += 1;
+            Err(_) => {
+                // Invalid UTF-8 physical line: stored entries are always valid
+                // UTF-8 JSON, so this can only be a torn/corrupt fragment. Drop
+                // just this physical line; the next valid line still survives.
                 dropped += 1;
             }
-            None => break,
         }
     }
 
@@ -275,6 +298,16 @@ fn write_and_swap(
 
 pub(crate) fn stats_payload(cfg: &Config, limit: usize) -> Result<Value> {
     let path = history_path(cfg);
+    // Hold the same advisory lock the writer uses for the brief open+read window,
+    // so a concurrent rotation can't swap the ledger inode mid-scan (benign on
+    // Unix, but matters on Windows where the rename would otherwise fail or the
+    // reader would see a torn view). Best-effort, exactly like append: a lockless
+    // filesystem warns inside `acquire` and we proceed unlocked. No deadlock risk
+    // — the exclusive lock is acquired and released within a single operation
+    // (append releases at the end of `append_download`; stats is a separate call),
+    // so the writer and reader never wait on each other within one thread. The
+    // guard drops at function end, releasing the lock.
+    let _guard = HistoryLock::acquire(&path);
     let file = match std::fs::File::open(&path) {
         Ok(file) => Some(file),
         Err(error) if error.kind() == ErrorKind::NotFound => None,

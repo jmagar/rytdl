@@ -184,10 +184,17 @@ impl Paths {
 
 /// Reject anything that is not an `http`/`https` URL with a clear error, and on
 /// success return the trimmed value so a leading-space URL never reaches yt-dlp.
+///
+/// Embedded control characters (newline, CR, NUL, etc.) are rejected up front
+/// (SEC-F2): `trim()` only strips surrounding whitespace, so without this an
+/// interior `\n`/`\r` would survive into the subprocess argv, the JSONL history
+/// ledger, and reflected error messages — enabling log/ledger injection.
 fn validate_http_url(value: &str) -> anyhow::Result<String> {
     let trimmed = value.trim();
-    let lower = trimmed.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
+    if trimmed.chars().any(char::is_control) {
+        anyhow::bail!("invalid URL {value:?}: contains control characters");
+    }
+    if crate::util::is_http_url(trimmed) {
         // Require a non-empty host component after the scheme separator.
         let rest = trimmed
             .split_once("://")

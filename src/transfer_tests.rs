@@ -139,7 +139,11 @@ async fn dropped_transfer_command_kills_child_process() {
     let mut cmd = tokio::process::Command::new("sh");
     cmd.args(["-c", &script]);
 
-    let result = tokio::time::timeout(Duration::from_millis(100), command_output(&mut cmd)).await;
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        run_capped(&mut cmd, None, Some(STDERR_CAP)),
+    )
+    .await;
     assert!(result.is_err(), "command should still be sleeping");
 
     let pid = std::fs::read_to_string(&pid_path)

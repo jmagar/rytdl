@@ -1,7 +1,7 @@
 //! Small shared helpers, including the single subprocess runner used by the
 //! downloader, probe, fingerprinter, and transfer paths.
 
-use std::process::{ExitStatus, Output, Stdio};
+use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Result};
@@ -19,14 +19,63 @@ const SPAWN_RETRIES: u32 = 5;
 
 /// Best-effort error text from a failed subprocess: trimmed stderr, falling
 /// back to stdout when stderr is empty.
-pub fn command_error(out: &Output) -> String {
-    let err = String::from_utf8_lossy(&out.stderr);
-    let err = err.trim();
+///
+/// Generic over the captured-output shape so every call site shares one
+/// implementation: the async runner path passes the already-decoded
+/// `(stderr: &str, stdout: &[u8])` pair from [`CommandOutput`] (no
+/// re-materializing a `std::process::Output`), while the synchronous `setup`
+/// path passes a `&std::process::Output` whose raw `stderr` bytes are decoded
+/// lossily — identical to the previous dedicated `&Output` helper.
+pub fn command_error(out: impl CommandErrText) -> String {
+    let stderr = out.stderr_text();
+    let err = stderr.trim();
     if err.is_empty() {
-        String::from_utf8_lossy(&out.stdout).trim().to_string()
+        String::from_utf8_lossy(out.stdout_bytes())
+            .trim()
+            .to_string()
     } else {
         err.to_string()
     }
+}
+
+/// Adapter letting [`command_error`] accept either a decoded `(stderr, stdout)`
+/// field pair (the async [`CommandOutput`] path) or a `&std::process::Output`
+/// (the synchronous `setup` path) without duplicating the formatting logic.
+pub trait CommandErrText {
+    /// stderr as text. For raw-byte sources this decodes lossily, matching the
+    /// historical `String::from_utf8_lossy` behavior.
+    fn stderr_text(&self) -> std::borrow::Cow<'_, str>;
+    /// stdout bytes, used as the fallback when stderr is empty.
+    fn stdout_bytes(&self) -> &[u8];
+}
+
+impl CommandErrText for (&str, &[u8]) {
+    fn stderr_text(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(self.0)
+    }
+    fn stdout_bytes(&self) -> &[u8] {
+        self.1
+    }
+}
+
+impl CommandErrText for &std::process::Output {
+    fn stderr_text(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.stderr)
+    }
+    fn stdout_bytes(&self) -> &[u8] {
+        &self.stdout
+    }
+}
+
+/// True if `s` is an `http`/`https` URL. Shared so search-result filtering and
+/// input validation use one predicate. The scheme is matched case-insensitively
+/// (URI schemes are case-insensitive per RFC 3986; e.g. `HTTPS://` is valid).
+pub fn is_http_url(s: &str) -> bool {
+    let starts_ci = |prefix: &str| {
+        s.len() >= prefix.len()
+            && s.as_bytes()[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+    };
+    starts_ci("https://") || starts_ci("http://")
 }
 
 /// Non-empty trimmed string field from a JSON value, or `None`.
@@ -136,18 +185,6 @@ pub async fn run_capped(
     })
 }
 
-/// Convenience over [`run_capped`] that materializes a plain
-/// [`std::process::Output`] (full stderr). Used by call sites whose callers
-/// apply their own external timeout and expect an `Output`.
-pub async fn run_output(cmd: &mut Command) -> Result<Output> {
-    let captured = run_capped(cmd, None, None).await?;
-    Ok(Output {
-        status: captured.status,
-        stdout: captured.stdout,
-        stderr: captured.stderr.into_bytes(),
-    })
-}
-
 /// Kill the child. On Unix, signal the whole process group so grandchildren
 /// (ffmpeg under yt-dlp, ssh under rsync) are reaped, not just the direct child.
 async fn kill_process_group(child: &mut Child) {
@@ -155,11 +192,25 @@ async fn kill_process_group(child: &mut Child) {
     {
         // The child was spawned with `process_group(0)`, so its PID is also its
         // PGID. Negating the PID targets the whole group with SIGKILL.
-        if let Some(pid) = child.id() {
+        // Only signal the group when the PID fits in a positive `i32`, so the
+        // `pid as i32` cast and its negation are well-defined. On Linux
+        // `/proc/sys/kernel/pid_max` is capped well below `i32::MAX` (2^22 by
+        // default, 2^31 maximum-but-still < i32::MAX as an unsigned bound), so a
+        // real child PID always satisfies this; the guard only excludes the
+        // impossible wrap case and falls back to a direct kill if it ever fires.
+        if let Some(pid) = child.id().filter(|&pid| pid <= i32::MAX as u32) {
+            debug_assert!(
+                pid <= i32::MAX as u32,
+                "Linux pid_max < i32::MAX, so the i32 cast cannot wrap"
+            );
             // SAFETY: `kill(2)` with a negative pid signals the whole process
-            // group. We declare the symbol directly rather than depending on the
-            // `libc` crate (no `libc`/external crate dependency is added) — `kill`
-            // is part of the C runtime that every Unix Rust binary already links.
+            // group. `pid <= i32::MAX` (checked above) means `pid as i32` is
+            // non-negative and `-(pid as i32)` cannot overflow, so it targets the
+            // child's own process group (the child was spawned with
+            // `process_group(0)`, making its PID equal to its PGID). We declare
+            // the symbol directly rather than depending on the `libc` crate (no
+            // `libc`/external crate dependency is added) — `kill` is part of the C
+            // runtime that every Unix Rust binary already links.
             const SIGKILL: i32 = 9;
             let killed = unsafe { libc_kill(-(pid as i32), SIGKILL) };
             if killed == 0 {
