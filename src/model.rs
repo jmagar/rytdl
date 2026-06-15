@@ -94,38 +94,125 @@ pub enum ResponseFormat {
     Json,
 }
 
-/// Accept either a single URL string or a list of URL strings.
+/// Accept either a single string or a list of strings. Shared shape behind both
+/// [`Urls`] and [`Paths`] (they were byte-identical enums; BP-M5).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(untagged)]
-pub enum Urls {
+pub enum OneOrMany {
     One(String),
     Many(Vec<String>),
 }
 
-impl Urls {
+impl OneOrMany {
     pub fn into_vec(self) -> Vec<String> {
         match self {
-            Urls::One(s) => vec![s],
-            Urls::Many(v) => v,
+            OneOrMany::One(s) => vec![s],
+            OneOrMany::Many(v) => v,
         }
     }
 }
 
-/// Accept either a single local file path string or a list of paths.
+/// Accept either a single URL string or a list of URL strings.
+///
+/// A distinct newtype (not a `OneOrMany` alias) so the only way to extract the
+/// values is [`Urls::into_validated_vec`], which enforces the http(s) backstop.
+/// There is deliberately no public unvalidated extractor on `Urls`: a URL caller
+/// cannot reach the yt-dlp subprocess without passing validation, and that is a
+/// compile-time guarantee rather than a naming convention. `#[serde(transparent)]`
+/// keeps the wire shape (string-or-array) and the generated JSON schema identical
+/// to the bare `OneOrMany` — schemars reads `transparent` from the serde attr and
+/// delegates to `OneOrMany`'s `string | array` schema.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum Paths {
-    One(String),
-    Many(Vec<String>),
+#[serde(transparent)]
+pub struct Urls(OneOrMany);
+
+/// Accept either a single local file path string or a list of paths.
+///
+/// Local paths are not URLs, so they get a plain [`Paths::into_vec`] with no
+/// scheme check — and crucially they do NOT expose `into_validated_vec`, so the
+/// URL backstop can never be wrongly applied to (or skipped for) local files.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(transparent)]
+pub struct Paths(OneOrMany);
+
+impl Urls {
+    /// Validate that every entry is a well-formed `http`/`https` URL before it
+    /// reaches the yt-dlp subprocess, returning the trimmed values. This is the
+    /// ONLY extractor on `Urls`: there is no unvalidated path, so the backstop is
+    /// not opt-in. Defense-in-depth for the `--` end-of-options guard at the
+    /// yt-dlp call sites (F2): rejects values such as `--exec=...`, `-o /path`, or
+    /// non-http(s) schemes that yt-dlp would otherwise interpret as flags.
+    ///
+    /// The download and probe paths in `service.rs` already call this; the local
+    /// `paths` path (identify) uses [`Paths::into_vec`] instead, as those are
+    /// files, not URLs.
+    pub fn into_validated_vec(self) -> anyhow::Result<Vec<String>> {
+        self.0
+            .into_vec()
+            .into_iter()
+            .map(|url| validate_http_url(&url))
+            .collect()
+    }
+
+    /// Construct from a single URL. Named to read like the former `Urls::One`
+    /// enum variant so existing test construction sites keep working after the
+    /// newtype refactor. Construction does not validate; [`Urls::into_validated_vec`]
+    /// is the single validation gate.
+    #[cfg(test)]
+    #[allow(non_snake_case)]
+    pub fn One(url: String) -> Self {
+        Urls(OneOrMany::One(url))
+    }
 }
 
 impl Paths {
+    /// Extract the local file paths. No scheme validation: these are local files,
+    /// not URLs.
     pub fn into_vec(self) -> Vec<String> {
-        match self {
-            Paths::One(s) => vec![s],
-            Paths::Many(v) => v,
+        self.0.into_vec()
+    }
+
+    /// Construct from a single path. Named to read like the former `Paths::One`
+    /// enum variant so existing test construction sites keep working after the
+    /// newtype refactor.
+    #[cfg(test)]
+    #[allow(non_snake_case)]
+    pub fn One(path: String) -> Self {
+        Paths(OneOrMany::One(path))
+    }
+}
+
+/// Reject anything that is not an `http`/`https` URL with a clear error, and on
+/// success return the trimmed value so a leading-space URL never reaches yt-dlp.
+///
+/// Embedded control characters (newline, CR, NUL, etc.) are rejected up front
+/// (SEC-F2): `trim()` only strips surrounding whitespace, so without this an
+/// interior `\n`/`\r` would survive into the subprocess argv, the JSONL history
+/// ledger, and reflected error messages — enabling log/ledger injection.
+fn validate_http_url(value: &str) -> anyhow::Result<String> {
+    let trimmed = value.trim();
+    if trimmed.chars().any(char::is_control) {
+        anyhow::bail!("invalid URL {value:?}: contains control characters");
+    }
+    if crate::util::is_http_url(trimmed) {
+        // Require a non-empty host component after the scheme separator.
+        let rest = trimmed
+            .split_once("://")
+            .map(|(_, rest)| rest)
+            .unwrap_or_default();
+        if rest
+            .chars()
+            .next()
+            .is_some_and(|c| !matches!(c, '/' | '?' | '#'))
+        {
+            return Ok(trimmed.to_string());
         }
     }
+    anyhow::bail!(
+        "invalid URL {value:?}: only http:// and https:// URLs are accepted \
+         (a leading '-' or other scheme is rejected to prevent it being parsed \
+         as a yt-dlp option)"
+    )
 }
 
 fn default_audio_quality() -> String {
@@ -202,6 +289,10 @@ fn default_search_limit() -> u32 {
     10
 }
 
+/// Upper bound on `youtube_search` results. Single source of truth shared with
+/// `downloader::search_spec` (L5).
+pub const MAX_SEARCH_LIMIT: u32 = 25;
+
 /// Input for `youtube_search` and `youtube_search_ui`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct SearchInput {
@@ -217,7 +308,7 @@ pub struct SearchInput {
 
 impl SearchInput {
     pub fn effective_limit(&self) -> u32 {
-        self.limit.clamp(1, 25)
+        self.limit.clamp(1, MAX_SEARCH_LIMIT)
     }
 }
 

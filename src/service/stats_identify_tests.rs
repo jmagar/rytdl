@@ -118,7 +118,7 @@ async fn run_identify_requires_acoustid_client_key() {
     let cfg = test_config();
 
     let err = run_identify(
-        &cfg,
+        &std::sync::Arc::new(cfg),
         IdentifyInput {
             paths: Paths::One("/tmp/song.mp3".into()),
             write_tags: false,

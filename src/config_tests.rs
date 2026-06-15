@@ -83,13 +83,77 @@ fn checksum_pin_normalizes_blank_and_case() {
 
 #[test]
 fn parse_ssh_opts_preserves_quoted_values() {
+    // Safe options keep their (possibly space-containing) quoted values intact.
     assert_eq!(
-        parse_ssh_opts("-i '/home/me/media key' -o 'ProxyCommand=ssh jump nc %h %p'"),
+        parse_ssh_opts("-i '/home/me/media key' -o 'ConnectTimeout=10'"),
+        vec!["-i", "/home/me/media key", "-o", "ConnectTimeout=10"]
+    );
+}
+
+#[test]
+fn parse_ssh_opts_strips_command_execution_options() {
+    // Split form: `-o KEY=VALUE`. All three dangerous keys are dropped (key and
+    // value tokens both consumed), case-insensitively, while a safe `-o` option
+    // and a non-`-o` flag survive.
+    assert_eq!(
+        parse_ssh_opts(
+            "-o ProxyCommand=evil -o ConnectTimeout=10 \
+             -o localcommand=touch\\ pwned -o PermitLocalCommand=yes -p 2222"
+        ),
+        vec!["-o", "ConnectTimeout=10", "-p", "2222"]
+    );
+}
+
+#[test]
+fn parse_ssh_opts_strips_glued_command_execution_options() {
+    // Glued form: `-oKEY=VALUE`.
+    assert_eq!(
+        parse_ssh_opts(
+            "-oProxyCommand=evil -oConnectTimeout=10 \
+             -oLocalCommand=evil -oPermitLocalCommand=yes"
+        ),
+        vec!["-oConnectTimeout=10"]
+    );
+}
+
+#[test]
+fn parse_ssh_opts_preserves_safe_options_and_defaults() {
+    // A typical safe override set passes through untouched, and combines cleanly
+    // with the forced DEFAULT_SSH_OPTS via all_ssh_opts().
+    let parsed = parse_ssh_opts("-i /home/me/key -o ConnectTimeout=10 -p 2222");
+    assert_eq!(
+        parsed,
         vec![
             "-i",
-            "/home/me/media key",
+            "/home/me/key",
             "-o",
-            "ProxyCommand=ssh jump nc %h %p"
+            "ConnectTimeout=10",
+            "-p",
+            "2222"
+        ]
+    );
+
+    let mut cfg = blank();
+    cfg.ssh_opts = parsed;
+    let opts = cfg.all_ssh_opts();
+    assert_eq!(
+        &opts[..4],
+        &[
+            "-o",
+            "BatchMode=yes",
+            "-o",
+            "StrictHostKeyChecking=accept-new"
+        ]
+    );
+    assert_eq!(
+        &opts[4..],
+        &[
+            "-i",
+            "/home/me/key",
+            "-o",
+            "ConnectTimeout=10",
+            "-p",
+            "2222"
         ]
     );
 }
@@ -186,6 +250,23 @@ fn from_env_result_wires_runtime_env_values() {
     assert_eq!(cfg.ytdlp_timeout_secs, 77);
     assert_eq!(cfg.transfer_timeout_secs, 88);
 
+    clear_test_env();
+}
+
+#[test]
+fn from_env_strips_dangerous_ssh_opts_end_to_end() {
+    let _guard = env_lock();
+    clear_test_env();
+    std::env::set_var(
+        "YTDLP_SSH_OPTS",
+        "-o ProxyCommand=evil -oPermitLocalCommand=yes -o ConnectTimeout=10 -p 2222",
+    );
+
+    // from_env() is the #[cfg(test)]-only panicking wrapper; verify it still
+    // works in test builds and that the dangerous options are stripped.
+    let cfg = Config::from_env();
+
+    assert_eq!(cfg.ssh_opts, vec!["-o", "ConnectTimeout=10", "-p", "2222"]);
     clear_test_env();
 }
 

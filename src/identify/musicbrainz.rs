@@ -1,9 +1,12 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
 use serde_json::Value;
 use url::Url;
+
+use crate::identify::http_agent;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct RetagPreview {
@@ -28,23 +31,37 @@ pub(crate) trait MusicBrainzLookup: Send {
 
 pub(crate) struct UreqMusicBrainzLookup {
     user_agent: String,
+    agent: ureq::Agent,
     last_call: Option<Instant>,
+    /// PerfM4: memoize recordings within a single identify batch so repeated
+    /// recording_ids don't re-hit MusicBrainz (and don't pay the 1s rate-limit
+    /// sleep again). Keyed by `(recording_id, score-bits)` because the returned
+    /// preview embeds `confidence = score`.
+    cache: HashMap<(String, u64), RetagPreview>,
 }
 
 impl UreqMusicBrainzLookup {
     pub fn new(user_agent: String) -> Self {
         Self {
             user_agent,
+            agent: http_agent(),
             last_call: None,
+            cache: HashMap::new(),
         }
     }
 }
 
 impl MusicBrainzLookup for UreqMusicBrainzLookup {
     fn lookup_recording(&mut self, recording_id: &str, score: f64) -> Result<RetagPreview> {
+        let cache_key = (recording_id.to_string(), score.to_bits());
+        if let Some(preview) = self.cache.get(&cache_key) {
+            return Ok(preview.clone());
+        }
         wait_for_rate_limit(&mut self.last_call);
         let url = recording_url(recording_id)?;
-        let mut response = ureq::get(url.as_str())
+        let mut response = self
+            .agent
+            .get(url.as_str())
             .header("Accept", "application/json")
             .header("User-Agent", &self.user_agent)
             .call()
@@ -56,7 +73,9 @@ impl MusicBrainzLookup for UreqMusicBrainzLookup {
             .body_mut()
             .read_to_vec()
             .context("read MusicBrainz response")?;
-        parse_recording_lookup(&bytes, score)
+        let preview = parse_recording_lookup(&bytes, score)?;
+        self.cache.insert(cache_key, preview.clone());
+        Ok(preview)
     }
 }
 

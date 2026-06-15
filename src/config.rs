@@ -105,7 +105,10 @@ impl Config {
         })
     }
 
-    #[allow(dead_code)]
+    /// Panicking convenience wrapper over [`from_env_result`](Self::from_env_result),
+    /// gated to test builds only (`#[cfg(test)]`) so it can never be wired into
+    /// production startup. Production code paths must use `from_env_result`.
+    #[cfg(test)]
     pub fn from_env() -> Self {
         Self::from_env_result().expect("invalid ytdl-mcp environment configuration")
     }
@@ -144,7 +147,67 @@ fn parse_ssh_opts(s: &str) -> Vec<String> {
 }
 
 fn parse_ssh_opts_result(s: &str) -> Result<Vec<String>> {
-    Ok(shell_words::split(s)?)
+    Ok(strip_dangerous_ssh_opts(shell_words::split(s)?))
+}
+
+/// SSH `-o` option keys that let an operator turn a transfer into arbitrary
+/// command execution (e.g. `-o ProxyCommand=...`, `-o PermitLocalCommand=yes`
+/// `-o LocalCommand=...`). Compared case-insensitively against the key before
+/// the `=`.
+const DANGEROUS_SSH_OPT_KEYS: &[&str] = &["ProxyCommand", "LocalCommand", "PermitLocalCommand"];
+
+/// Defense-in-depth filter for operator-supplied `YTDLP_SSH_OPTS`.
+///
+/// `YTDLP_SSH_OPTS` is operator-controlled under this project's trust model, so
+/// this is hardening rather than a caller-reachable hole. Rather than
+/// hard-rejecting (which would brick the whole config on a single footgun), we
+/// **warn-and-strip**: any `-o`/`-oKEY=...` token whose key enables command
+/// execution ([`DANGEROUS_SSH_OPT_KEYS`]) is dropped with a clear `tracing`
+/// warning to stderr, while every other override (including unlisted `-o`
+/// options like `ConnectTimeout`) passes through untouched. Handles both the
+/// glued form (`-oProxyCommand=...`) and the split form (`-o`
+/// `ProxyCommand=...`).
+fn strip_dangerous_ssh_opts(tokens: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(tokens.len());
+    let mut iter = tokens.into_iter().peekable();
+    while let Some(token) = iter.next() {
+        if token == "-o" {
+            // Split form: `-o` followed by `KEY=VALUE` in the next token.
+            if let Some(value) = iter.peek() {
+                if is_dangerous_ssh_opt_value(value) {
+                    tracing::warn!(
+                        option = %value,
+                        "dropping dangerous ssh option from YTDLP_SSH_OPTS (enables command execution)"
+                    );
+                    iter.next(); // consume the value too
+                    continue;
+                }
+            }
+            out.push(token);
+        } else if let Some(value) = token.strip_prefix("-o") {
+            // Glued form: `-oKEY=VALUE`.
+            if is_dangerous_ssh_opt_value(value) {
+                tracing::warn!(
+                    option = %token,
+                    "dropping dangerous ssh option from YTDLP_SSH_OPTS (enables command execution)"
+                );
+                continue;
+            }
+            out.push(token);
+        } else {
+            out.push(token);
+        }
+    }
+    out
+}
+
+/// True if `value` (the `KEY=...` portion of an ssh `-o` option) names a key in
+/// [`DANGEROUS_SSH_OPT_KEYS`], compared case-insensitively.
+fn is_dangerous_ssh_opt_value(value: &str) -> bool {
+    let key = value.split('=').next().unwrap_or("").trim();
+    DANGEROUS_SSH_OPT_KEYS
+        .iter()
+        .any(|dangerous| key.eq_ignore_ascii_case(dangerous))
 }
 
 fn non_empty(key: &str) -> Option<String> {

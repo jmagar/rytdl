@@ -84,6 +84,40 @@ high-confidence MusicBrainz retagging for downloaded audio when
 for previewing or repairing existing library files, with manual tag writes
 enabled by `write_tags=true`.
 
+#### `youtube_download` JSON response
+
+With `response_format=json`, the call returns a single object describing the
+batch:
+
+| Field | Meaning |
+| --- | --- |
+| `transferred` | `true` if every produced subtree reached the remote. |
+| `transfer_error` | `null` on success, else the failure/timeout message (string). |
+| `remote` / `dest_path` / `destination` / `destinations` | The remote and the per-kind destination(s) actually used. |
+| `staging_kept_at` | Local staging path retained for retry (set when the transfer failed or `keep_local` was requested). |
+| `total_files` / `total_bytes` / `total_size` | Aggregate counts across all items. |
+| `partial_items` | Count of items that errored **but** still produced files. |
+| `failed_items` | Count of items that errored **and** produced no files. |
+| `items[]` | Per-URL results, each with a `status`, `title`, `video_id`, `error`, and a `files[]` list. |
+
+Each `items[].status` is one of:
+
+- `ok` — succeeded with files.
+- `partial` — an error occurred but some files were still produced.
+- `failed` — errored with no files.
+- `skipped` — nothing new (already in the archive).
+
+Optional keys are attached only when the relevant stage ran:
+
+- `metadata_retag` — MusicBrainz/AcoustID auto-retag summary (`attempted`,
+  `matched`, `written`, `skipped`, `errors`, or an `error` string); present when
+  `YTDLP_ACOUSTID_CLIENT_KEY` is configured.
+- `plex_playlist` — Plex playlist summary (`playlist`, `matched`, `added`,
+  `already_present`, `missing`); `plex_playlist_error` is set instead if the
+  Plex update failed (a Plex failure does not fail the download).
+- `history_error` — set when the download succeeded but the JSONL ledger append
+  failed.
+
 `youtube_probe` takes `urls` and `response_format`.
 
 ### `youtube_identify` parameters
@@ -210,6 +244,12 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 | `YTDLP_PATH` / `FFMPEG_PATH` | — | Use a specific yt-dlp / ffmpeg instead of auto-download. |
 | `YTDLP_LOG` | `info` | `tracing` filter (stderr only). |
 
+> **Maintainers:** this table is maintained **by hand**. `scripts/check-packaging.sh`
+> only cross-checks the four machine-readable config surfaces (the Claude plugin
+> `.mcp.json` / `userConfig`, `gemini-extension.json`, and `mcpb/manifest.json`);
+> it does **not** read this README. When you add, rename, or remove a `YTDLP_*`
+> env var, update this table manually — nothing in CI will catch the drift.
+
 ### Bootstrap trust model
 
 By default, first run resolves tools in this order: explicit env override,
@@ -224,6 +264,26 @@ auto-update.
 For stricter bootstrap control, combine `YTDLP_PATH` / `FFMPEG_PATH` with
 matching `YTDLP_SHA256` / `FFMPEG_SHA256` pins. Hash pins verify the resolved
 executable bytes; they are not upstream signature verification.
+
+### Security posture
+
+This server is designed to run with **trusted callers and operator-supplied
+config** — it is not a hardened multi-tenant boundary.
+
+- **Tool-call URLs reach yt-dlp.** Whatever `urls` an MCP caller passes are
+  handed to yt-dlp, a powerful extraction tool. Only point callers at it that
+  you trust. Tool-call URLs are validated as `http`/`https` before they reach
+  yt-dlp, and every positional is passed after a `--` end-of-options separator so
+  a `-`-prefixed value can't be parsed as a flag; the trust assumption above
+  still holds regardless.
+- **SSH is key-only and non-interactive.** Transfers force `BatchMode=yes` and
+  `StrictHostKeyChecking=accept-new`, so a TTY-less server fails fast instead of
+  prompting; there is no password auth. Auth comes from your SSH key/agent and
+  any options you add via `YTDLP_SSH_OPTS`.
+- **Remote specs and paths are validated.** The `RemoteSpec` and `RemotePath`
+  newtypes reject empty values, option-like (`-`-leading) remotes, and
+  whitespace/control characters before any value reaches `ssh`/`rsync`/`scp`,
+  and remote paths are single-quote-escaped for the remote shell.
 
 ## Requirements
 
@@ -270,9 +330,14 @@ Bare invocation serves MCP over stdio; `setup` runs the installer. A
 2. Cleans mix/radio URLs, then runs yt-dlp per mode into a staging tree
    (`staging/audio`, `staging/video`) with metadata/thumbnail/archive flags,
    source metadata sidecars, and the `Artist/Title [id]` output template.
-3. Transfers each kind's subtree to its own remote dir (rsync, else scp).
-4. Appends the completed call to the JSONL download ledger.
-5. Returns a markdown or JSON summary listing files, sizes, and the actual
+3. *(optional)* When `YTDLP_ACOUSTID_CLIENT_KEY` is set, fingerprints the
+   downloaded audio and writes high-confidence MusicBrainz/AcoustID tags
+   in-place — before transfer, so the remote copy carries the canonical tags.
+4. Transfers each kind's subtree to its own remote dir (rsync, else scp).
+5. *(optional)* When Plex credentials are configured and the transfer
+   succeeded, adds the downloaded audio tracks to the target Plex playlist.
+6. Appends the completed call to the JSONL download ledger.
+7. Returns a markdown or JSON summary listing files, sizes, and the actual
    destination(s).
 
 See `CLAUDE.md` for architecture, conventions, and gotchas.

@@ -106,10 +106,24 @@ pub async fn run() -> Result<()> {
     }
 
     eprintln!();
+    // `register` shells out via blocking `std::process::Command`; run the whole
+    // batch on a blocking thread so we never stall a tokio worker. Each result
+    // is reported back so the per-CLI ✓/✗ output is preserved.
+    let chosen_agents: Vec<&'static Agent> = chosen.iter().map(|&idx| available[idx]).collect();
+    let chosen_len = chosen.len();
+    let self_path_owned = self_path.clone();
+    let envs_owned = envs.clone();
+    let results = tokio::task::spawn_blocking(move || {
+        chosen_agents
+            .into_iter()
+            .map(|agent| (agent, register(agent, &self_path_owned, &envs_owned)))
+            .collect::<Vec<_>>()
+    })
+    .await?;
+
     let mut failures = 0;
-    for &idx in &chosen {
-        let agent = available[idx];
-        match register(agent, &self_path, &envs) {
+    for (agent, result) in results {
+        match result {
             Ok(()) => eprintln!("  ✓ registered with {}", agent.label),
             Err(e) => {
                 eprintln!("  ✗ {} failed: {e}", agent.label);
@@ -120,10 +134,7 @@ pub async fn run() -> Result<()> {
 
     if failures > 0 {
         // Non-zero exit so automation/users don't mistake a failed install for success.
-        anyhow::bail!(
-            "{failures} of {} agent registration(s) failed",
-            chosen.len()
-        );
+        anyhow::bail!("{failures} of {chosen_len} agent registration(s) failed");
     }
     eprintln!("\nDone. Restart each agent to pick up the new MCP server.");
     Ok(())
@@ -135,33 +146,9 @@ pub async fn run() -> Result<()> {
 ///   codex:  `mcp add --env K=V… <name> -- <cmd>`
 ///   gemini: `mcp add -s user <name> <cmd> -e K=V…`  (env array goes last)
 fn register(agent: &Agent, self_path: &str, envs: &[(String, String)]) -> Result<()> {
-    let mut cmd = Command::new(agent.bin);
-    cmd.arg("mcp").arg("add");
-    let env_pairs = || envs.iter().map(|(k, v)| format!("{k}={v}"));
-    match agent.bin {
-        "codex" => {
-            for p in env_pairs() {
-                cmd.arg("--env").arg(p);
-            }
-            cmd.arg(SERVER_NAME).arg("--").arg(self_path);
-        }
-        "gemini" => {
-            cmd.args(["-s", "user"]).arg(SERVER_NAME).arg(self_path);
-            for p in env_pairs() {
-                cmd.arg("-e").arg(p);
-            }
-        }
-        _ => {
-            // claude (and the default shape)
-            cmd.args(["-s", "user"]).arg(SERVER_NAME);
-            for p in env_pairs() {
-                cmd.arg("-e").arg(p);
-            }
-            cmd.arg("--").arg(self_path);
-        }
-    }
-
-    let out = cmd
+    let args = build_mcp_add_args(agent.bin, SERVER_NAME, self_path, envs);
+    let out = Command::new(agent.bin)
+        .args(&args)
         .output()
         .with_context(|| format!("run {} mcp add", agent.bin))?;
     if !out.status.success() {
@@ -169,3 +156,50 @@ fn register(agent: &Agent, self_path: &str, envs: &[(String, String)]) -> Result
     }
     Ok(())
 }
+
+/// Pure construction of the `mcp add` argument vector (everything after the
+/// `agent.bin` program name) for a given CLI. The ordering is position-sensitive
+/// and differs per CLI — see [`register`]'s doc comment. Extracted as a pure
+/// function so the per-CLI ordering can be asserted in tests.
+fn build_mcp_add_args(bin: &str, name: &str, cmd: &str, envs: &[(String, String)]) -> Vec<String> {
+    let mut args: Vec<String> = vec!["mcp".into(), "add".into()];
+    let env_pairs = || envs.iter().map(|(k, v)| format!("{k}={v}"));
+    match bin {
+        "codex" => {
+            for p in env_pairs() {
+                args.push("--env".into());
+                args.push(p);
+            }
+            args.push(name.into());
+            args.push("--".into());
+            args.push(cmd.into());
+        }
+        "gemini" => {
+            args.push("-s".into());
+            args.push("user".into());
+            args.push(name.into());
+            args.push(cmd.into());
+            for p in env_pairs() {
+                args.push("-e".into());
+                args.push(p);
+            }
+        }
+        _ => {
+            // claude (and the default shape)
+            args.push("-s".into());
+            args.push("user".into());
+            args.push(name.into());
+            for p in env_pairs() {
+                args.push("-e".into());
+                args.push(p);
+            }
+            args.push("--".into());
+            args.push(cmd.into());
+        }
+    }
+    args
+}
+
+#[cfg(test)]
+#[path = "setup_tests.rs"]
+mod tests;

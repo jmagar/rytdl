@@ -6,6 +6,7 @@
 
 mod bootstrap;
 mod config;
+mod doctor;
 mod downloader;
 mod history;
 mod identify;
@@ -37,6 +38,8 @@ struct Cli {
 enum Command {
     /// Install yt-dlp + ffmpeg and register this server into your agent CLIs.
     Setup,
+    /// Print a diagnostic report (version, platform, tools, config presence).
+    Doctor,
     /// Serve MCP over stdio (the default when no subcommand is given).
     Serve,
 }
@@ -49,6 +52,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Some(Command::Setup) => setup::run().await,
+        Some(Command::Doctor) => doctor::run().await,
         Some(Command::Serve) | None => serve().await,
     }
 }

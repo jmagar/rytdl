@@ -1,5 +1,4 @@
 use super::*;
-use crate::downloader::{ItemResult, MediaFile};
 use serde_json::json;
 
 #[derive(Default)]
@@ -98,17 +97,13 @@ impl PlexTransport for FakePlex {
 #[test]
 fn add_downloaded_audio_skips_existing_and_adds_missing_playlist_items() {
     let mut plex = FakePlex::default();
-    let results = vec![ItemResult {
-        files: vec![
-            audio_file("Already There", "Artist A"),
-            audio_file("New Song", "Artist B"),
-            video_file("Ignored Video", "Artist C"),
-        ],
-        ..Default::default()
-    }];
+    let tracks = vec![
+        track("Already There", "Artist A"),
+        track("New Song", "Artist B"),
+    ];
 
     let update =
-        add_downloaded_audio_with_transport(&mut plex, "Downloads", &results).expect("plex update");
+        add_downloaded_audio_with_transport(&mut plex, "Downloads", &tracks).expect("plex update");
 
     assert_eq!(update.playlist, "Downloads");
     assert_eq!(update.playlist_id.as_deref(), Some("99"));
@@ -128,13 +123,10 @@ fn add_downloaded_audio_skips_existing_and_adds_missing_playlist_items() {
 #[test]
 fn add_downloaded_audio_creates_playlist_with_first_matched_track() {
     let mut plex = CreatePlaylistPlex::default();
-    let results = vec![ItemResult {
-        files: vec![audio_file("New Song", "Artist B")],
-        ..Default::default()
-    }];
+    let tracks = vec![track("New Song", "Artist B")];
 
-    let update = add_downloaded_audio_with_transport(&mut plex, "Fresh List", &results)
-        .expect("plex update");
+    let update =
+        add_downloaded_audio_with_transport(&mut plex, "Fresh List", &tracks).expect("plex update");
 
     assert_eq!(update.playlist_id.as_deref(), Some("100"));
     assert_eq!(update.matched, 1);
@@ -173,12 +165,11 @@ fn add_downloaded_audio_without_audio_files_does_not_require_plex_config() {
         ytdlp_timeout_secs: 5,
         transfer_timeout_secs: 5,
     };
-    let results = vec![ItemResult {
-        files: vec![video_file("Ignored Video", "Artist C")],
-        ..Default::default()
-    }];
+    // A video-only download yields no Plex audio inputs, so the caller passes an
+    // empty slice and Plex config is never required.
+    let tracks: Vec<PlexTrackInput> = Vec::new();
 
-    let update = add_downloaded_audio(&cfg, "Downloads", &results).expect("empty update");
+    let update = add_downloaded_audio(&cfg, "Downloads", &tracks).expect("empty update");
 
     assert_eq!(update.playlist, "Downloads");
     assert_eq!(update.matched, 0);
@@ -247,22 +238,237 @@ impl PlexTransport for CreatePlaylistPlex {
     }
 }
 
-fn audio_file(title: &str, uploader: &str) -> MediaFile {
-    media_file("audio", title, uploader)
+/// Fake whose `/search` returns a single near-miss: the title differs from the
+/// query, and no artist field matches the uploader. Used to exercise the
+/// fallback logic in `find_track_rating_key`.
+#[derive(Default)]
+struct NearMissPlex {
+    posts: Vec<(String, Vec<(String, String)>)>,
+    puts: Vec<(String, Vec<(String, String)>)>,
+    // Extra non-matching candidates to append to the single near-miss hit.
+    extra_candidates: Vec<Value>,
 }
 
-fn video_file(title: &str, uploader: &str) -> MediaFile {
-    media_file("video", title, uploader)
+impl PlexTransport for NearMissPlex {
+    fn get(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
+        match path {
+            "/identity" => Ok(json!({
+                "MediaContainer": { "machineIdentifier": "machine-1" }
+            })),
+            "/playlists" => Ok(json!({ "MediaContainer": { "Metadata": [] } })),
+            "/search" => {
+                let query = params
+                    .iter()
+                    .find(|(key, _)| *key == "query")
+                    .map(|(_, value)| *value)
+                    .unwrap_or("");
+                let mut metadata = vec![json!({
+                    "ratingKey": "555",
+                    "type": "track",
+                    // Title intentionally NOT equal to the query.
+                    "title": format!("{query} (Live)"),
+                    "grandparentTitle": "Some Other Artist"
+                })];
+                metadata.extend(self.extra_candidates.iter().cloned());
+                Ok(json!({ "MediaContainer": { "Metadata": metadata } }))
+            }
+            _ => bail!("unexpected GET {path}"),
+        }
+    }
+
+    fn post(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
+        self.posts.push((
+            path.to_string(),
+            params
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        ));
+        Ok(json!({
+            "MediaContainer": { "Metadata": [ { "ratingKey": "777", "title": "Fallback List" } ] }
+        }))
+    }
+
+    fn put(&mut self, path: &str, params: &[(&str, &str)]) -> Result<()> {
+        self.puts.push((
+            path.to_string(),
+            params
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        ));
+        Ok(())
+    }
 }
 
-fn media_file(kind: &'static str, title: &str, uploader: &str) -> MediaFile {
-    MediaFile {
-        path: format!("{title}.mp3").into(),
-        kind,
-        size: 10,
-        title: Some(title.to_string()),
-        video_id: Some(format!("{title}-id")),
+#[test]
+fn single_near_miss_candidate_falls_back_to_sole_hit() {
+    // One non-exact search hit -> unambiguous -> fall back to it (matched).
+    let mut plex = NearMissPlex::default();
+    let tracks = vec![track("Mystery Track", "Different Uploader")];
+
+    let update = add_downloaded_audio_with_transport(&mut plex, "Fallback List", &tracks)
+        .expect("plex update");
+
+    assert_eq!(update.matched, 1);
+    assert_eq!(update.added, 1);
+    assert!(update.missing.is_empty());
+    // Playlist did not exist, so the sole-candidate fallback should have
+    // created it from rating key 555.
+    assert_eq!(plex.posts.len(), 1);
+    assert_eq!(
+        plex.posts[0]
+            .1
+            .iter()
+            .find(|(k, _)| k == "uri")
+            .map(|(_, v)| v.as_str()),
+        Some("server://machine-1/com.plexapp.plugins.library/library/metadata/555")
+    );
+}
+
+#[test]
+fn ambiguous_near_miss_candidates_record_missing() {
+    // Two non-exact candidates -> ambiguous -> prefer no match over a guess.
+    let mut plex = NearMissPlex {
+        extra_candidates: vec![json!({
+            "ratingKey": "556",
+            "type": "track",
+            "title": "Mystery Track (Remix)",
+            "grandparentTitle": "Yet Another Artist"
+        })],
+        ..Default::default()
+    };
+    let tracks = vec![track("Mystery Track", "Different Uploader")];
+
+    let update = add_downloaded_audio_with_transport(&mut plex, "Fallback List", &tracks)
+        .expect("plex update");
+
+    assert_eq!(update.matched, 0);
+    assert_eq!(update.added, 0);
+    assert_eq!(update.missing.len(), 1);
+    assert_eq!(update.missing[0].title, "Mystery Track");
+    assert!(plex.posts.is_empty());
+}
+
+/// Fake whose `/search` hit matches the uploader only via `parentTitle` (the
+/// album), confirming `parentTitle` participates in artist matching.
+#[derive(Default)]
+struct ParentTitleMatchPlex {
+    posts: Vec<(String, Vec<(String, String)>)>,
+    puts: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl PlexTransport for ParentTitleMatchPlex {
+    fn get(&mut self, path: &str, _params: &[(&str, &str)]) -> Result<Value> {
+        match path {
+            "/identity" => Ok(json!({
+                "MediaContainer": { "machineIdentifier": "machine-1" }
+            })),
+            "/playlists" => Ok(json!({ "MediaContainer": { "Metadata": [] } })),
+            "/search" => Ok(json!({
+                "MediaContainer": {
+                    "Metadata": [
+                        {
+                            "ratingKey": "333",
+                            "type": "track",
+                            "title": "Album Cut",
+                            // Artist field does NOT match; album (parentTitle) does.
+                            "grandparentTitle": "Unrelated Artist",
+                            "parentTitle": "Matching Uploader",
+                            // originalTitle must be ignored even though it would match.
+                            "originalTitle": "Should Be Ignored"
+                        }
+                    ]
+                }
+            })),
+            _ => bail!("unexpected GET {path}"),
+        }
+    }
+
+    fn post(&mut self, path: &str, params: &[(&str, &str)]) -> Result<Value> {
+        self.posts.push((
+            path.to_string(),
+            params
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        ));
+        Ok(json!({
+            "MediaContainer": { "Metadata": [ { "ratingKey": "333", "title": "Album List" } ] }
+        }))
+    }
+
+    fn put(&mut self, path: &str, params: &[(&str, &str)]) -> Result<()> {
+        self.puts.push((
+            path.to_string(),
+            params
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        ));
+        Ok(())
+    }
+}
+
+#[test]
+fn parent_title_satisfies_artist_match() {
+    let mut plex = ParentTitleMatchPlex::default();
+    let tracks = vec![track("Album Cut", "Matching Uploader")];
+
+    let update =
+        add_downloaded_audio_with_transport(&mut plex, "Album List", &tracks).expect("plex update");
+
+    assert_eq!(update.matched, 1);
+    assert_eq!(update.added, 1);
+    assert!(update.missing.is_empty());
+}
+
+#[test]
+fn redact_url_replaces_plex_token_value() {
+    let transport = UreqPlexTransport {
+        base_url: "http://plex.local:32400".to_string(),
+        token: "super-secret-token".to_string(),
+    };
+    let url = transport
+        .url("/search", &[("query", "Song"), ("type", TRACK_TYPE)])
+        .expect("url");
+
+    // Sanity: the live URL really does carry the token.
+    assert!(url.as_str().contains("super-secret-token"));
+
+    let redacted = redact_url(&url);
+    assert!(
+        !redacted.contains("super-secret-token"),
+        "redacted URL leaked the token: {redacted}"
+    );
+    assert!(redacted.contains("X-Plex-Token=REDACTED"));
+    // Non-sensitive params survive for debugging.
+    assert!(redacted.contains("query=Song"));
+}
+
+#[test]
+fn failing_plex_call_error_does_not_leak_token() {
+    // A real transport pointed at an unroutable address fails to connect; the
+    // resulting anyhow error chain must not contain the token.
+    let mut transport = UreqPlexTransport {
+        base_url: "http://127.0.0.1:1".to_string(),
+        token: "super-secret-token".to_string(),
+    };
+    let err = transport
+        .get("/identity", &[])
+        .expect_err("connection should fail");
+    let rendered = format!("{err:#}");
+    assert!(
+        !rendered.contains("super-secret-token"),
+        "error chain leaked the token: {rendered}"
+    );
+}
+
+/// Build a Plex input DTO the way `service::plex_track_inputs` would for a
+/// downloaded audio file: resolved title plus uploader.
+fn track(title: &str, uploader: &str) -> PlexTrackInput {
+    PlexTrackInput {
+        title: title.to_string(),
         uploader: Some(uploader.to_string()),
-        duration: Some(120.0),
     }
 }

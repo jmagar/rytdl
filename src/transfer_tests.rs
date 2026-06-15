@@ -2,6 +2,9 @@ use super::*;
 
 #[test]
 fn remote_mkdir_command_quotes_shell_sensitive_paths() {
+    // All inputs are valid absolute paths (a leading-dash path is rejected by
+    // RemotePath::parse and is covered separately below); the point here is
+    // that shell-sensitive characters in an accepted path are quoted safely.
     let cases = [
         ("/media/music library", "mkdir -p -- '/media/music library'"),
         ("/media/O'Brien", "mkdir -p -- '/media/O'\\''Brien'"),
@@ -13,13 +16,56 @@ fn remote_mkdir_command_quotes_shell_sensitive_paths() {
             "/media/$(touch pwned)",
             "mkdir -p -- '/media/$(touch pwned)'",
         ),
-        ("-dash/child", "mkdir -p -- '-dash/child'"),
+        ("/-dash/child", "mkdir -p -- '/-dash/child'"),
     ];
 
     for (raw, expected) in cases {
         let path = RemotePath::parse(raw).unwrap();
         assert_eq!(remote_mkdir_command(&path), expected);
     }
+}
+
+#[test]
+fn remote_path_accepts_normal_absolute_path() {
+    assert_eq!(
+        RemotePath::parse("/srv/music").unwrap().as_str(),
+        "/srv/music"
+    );
+    // Embedded spaces are fine; they are shell-quoted downstream.
+    assert_eq!(
+        RemotePath::parse("/media/music library").unwrap().as_str(),
+        "/media/music library"
+    );
+}
+
+#[test]
+fn remote_path_rejects_unsafe_values_with_typed_errors() {
+    use TransferValidationError as E;
+    let field = "remote destination path";
+
+    let cases: [(&str, E); 7] = [
+        ("", E::Empty { field }),
+        ("   ", E::Empty { field }),
+        ("/media/\u{7}bell", E::BadChars { field }),
+        ("-oProxyCommand=sh", E::LeadingDash { field }),
+        ("relative/path", E::NotAbsolute { field }),
+        ("music", E::NotAbsolute { field }),
+        ("/music/../../etc", E::Traversal { field }),
+    ];
+
+    for (raw, expected) in cases {
+        let err = RemotePath::parse_typed(raw).expect_err(&format!("{raw:?} should be rejected"));
+        assert_eq!(err, expected, "wrong variant for {raw:?}");
+    }
+}
+
+#[test]
+fn remote_path_rejects_traversal_and_relative_via_public_parse() {
+    // Public anyhow-returning surface still rejects these.
+    assert!(RemotePath::parse("/music/../etc").is_err());
+    assert!(RemotePath::parse("..").is_err());
+    assert!(RemotePath::parse("~/.config/autostart").is_err());
+    assert!(RemotePath::parse("-leading").is_err());
 }
 
 #[test]
@@ -93,7 +139,11 @@ async fn dropped_transfer_command_kills_child_process() {
     let mut cmd = tokio::process::Command::new("sh");
     cmd.args(["-c", &script]);
 
-    let result = tokio::time::timeout(Duration::from_millis(100), command_output(&mut cmd)).await;
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        run_capped(&mut cmd, None, Some(STDERR_CAP)),
+    )
+    .await;
     assert!(result.is_err(), "command should still be sleeping");
 
     let pid = std::fs::read_to_string(&pid_path)

@@ -82,6 +82,70 @@ pub(crate) fn verify_sha256(path: &Path, expected: &str, label: &str) -> Result<
     Ok(())
 }
 
+/// Enforce an optional SHA-256 pin on `path`. When `expected` is `None` this is
+/// a no-op; when set and the bytes don't match it's a hard error. Non-destructive
+/// — used for user-supplied override/PATH binaries we must not delete.
+pub(crate) fn verify_pin(path: &Path, expected: Option<&str>, label: &str) -> Result<()> {
+    match expected {
+        Some(expected) => verify_sha256(path, expected, label),
+        None => Ok(()),
+    }
+}
+
+/// Like [`verify_pin`], but for binaries this process just placed in the cache
+/// (downloaded/unpacked). On a pin mismatch the offending file is removed
+/// (best-effort) so a corrupt or tampered download is never cached and trusted
+/// on a later run.
+pub(crate) fn verify_pin_cached(path: &Path, expected: Option<&str>, label: &str) -> Result<()> {
+    if let Err(e) = verify_pin(path, expected, label) {
+        // Don't leave a poisoned binary in the cache for the next run to trust.
+        if let Err(rm) = std::fs::remove_file(path) {
+            tracing::warn!(
+                error = %rm,
+                path = %path.display(),
+                "failed to remove file after checksum mismatch",
+            );
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// Where a tool resolved from, without triggering any download. Used by the
+/// `doctor` diagnostic to report install state without paying for a first-run
+/// download (which `ensure*` would otherwise perform).
+#[derive(Debug, Clone)]
+pub enum ResolvedTool {
+    /// Found via `YTDLP_PATH`/`FFMPEG_PATH` override or on `PATH`.
+    Found(PathBuf),
+    /// Already present in the per-user cache `bin` dir.
+    Cached(PathBuf),
+    /// Not yet present anywhere — would be downloaded on first use.
+    WouldBootstrap,
+}
+
+/// Read-only, download-free probe of where a tool *would* resolve from. Mirrors
+/// the override → PATH → cache prefix of the real `ensure` resolvers but never
+/// downloads and never mutates the cache. Intended for diagnostics only.
+///
+/// `override_path`/`env_var`/`bin_name` match a tool's `ensure` call (e.g.
+/// `cfg.ytdlp_path`, `"YTDLP_PATH"`, `"yt-dlp"`). An override pointing at a
+/// missing file surfaces as an error, just like the real path.
+pub fn resolve_no_download(
+    override_path: Option<&str>,
+    env_var: &str,
+    bin_name: &str,
+) -> Result<ResolvedTool> {
+    if let Some(found) = resolve_override_or_path(override_path, env_var, bin_name)? {
+        return Ok(ResolvedTool::Found(found));
+    }
+    let cached = cache_bin_dir().join(exe_name(bin_name));
+    if cached.is_file() {
+        return Ok(ResolvedTool::Cached(cached));
+    }
+    Ok(ResolvedTool::WouldBootstrap)
+}
+
 /// Resolve yt-dlp only (no ffmpeg) — used by the read-only probe path so it
 /// doesn't pay for ffmpeg's large first-run download it never uses.
 pub fn ensure_ytdlp(cfg: &Config) -> Result<PathBuf> {
@@ -108,6 +172,7 @@ pub fn ensure(cfg: &Config) -> Result<Tools> {
 fn with_bin_lock<T>(f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
     let bin = cache_bin_dir();
     std::fs::create_dir_all(&bin).with_context(|| format!("create cache dir {}", bin.display()))?;
+    restrict_dir_perms(&bin);
 
     let lock = std::fs::OpenOptions::new()
         .create(true)
@@ -126,6 +191,20 @@ fn with_bin_lock<T>(f: impl FnOnce(&Path) -> Result<T>) -> Result<T> {
     let _ = FileExt::unlock(&lock);
     result
 }
+
+/// Tighten the cache `bin` dir to owner-only (0o700) on Unix to shrink the
+/// multi-user TOCTOU window between download/verify and exec. Best-effort: a
+/// failure here shouldn't abort tool resolution. No-op on non-Unix.
+#[cfg(unix)]
+fn restrict_dir_perms(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+        tracing::warn!(error = %e, path = %dir.display(), "could not restrict cache dir permissions");
+    }
+}
+
+#[cfg(not(unix))]
+fn restrict_dir_perms(_dir: &Path) {}
 
 #[cfg(test)]
 #[path = "bootstrap_tests.rs"]

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use serde::Serialize;
 use serde_json::json;
 
 use crate::downloader::{ItemResult, ProbeResult};
@@ -7,6 +8,96 @@ use crate::model::ResponseFormat;
 
 #[cfg(test)]
 use crate::model::SearchPayload;
+
+/// Typed source-of-truth for the `youtube_download` result payload.
+///
+/// AH2 / Quality H1 / BP-M3: the download result used to be an untyped
+/// `serde_json::Value` built here, mutated by string key in `service.rs`, and
+/// read back by string key in `history.rs` — a renamed field compiled and
+/// silently yielded `null`/`0`. This struct is now the single schema: field
+/// renames are compile-checked across the builder, the markdown renderer, and
+/// the history ledger.
+///
+/// The JSON emitted to MCP clients (`response_format=json`) is byte-compatible
+/// with the previous hand-built `json!` map: the field order, key names, and
+/// `null`-vs-absent semantics below match it exactly. Core fields always
+/// serialize (matching the old map, where e.g. `transfer_error`/`destination`/
+/// `staging_kept_at` were always present as `null` when empty). The
+/// side-channel fields use `skip_serializing_if` so they only appear when set —
+/// matching the old `payload["key"] = ...` insert-only behavior in service.rs.
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DownloadPayload {
+    pub transferred: bool,
+    pub transfer_error: Option<String>,
+    pub remote: String,
+    pub dest_path: String,
+    pub destination: Option<String>,
+    pub destinations: Vec<DownloadDestination>,
+    pub staging_kept_at: Option<String>,
+    pub total_files: usize,
+    pub total_bytes: u64,
+    pub total_size: String,
+    pub partial_items: usize,
+    pub failed_items: usize,
+    pub items: Vec<DownloadItem>,
+    // Side-channels attached after the core build in service.rs. Only present
+    // when the corresponding step ran/failed, hence skip-if-none. Both are typed
+    // (not `serde_json::Value`): `RetagSummary` and `PlexPlaylistUpdate` own the
+    // schema, so their serialized JSON stays byte-compatible with the previous
+    // hand-built maps while field renames become compile errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata_retag: Option<super::retag::RetagSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plex_playlist: Option<crate::plex::PlexPlaylistUpdate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plex_playlist_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub history_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DownloadDestination {
+    pub kind: String,
+    pub dest_path: String,
+    pub destination: String,
+}
+
+/// Per-item terminal status. Serializes to the exact lowercase strings the
+/// previous `&'static str` field emitted (`"ok"`/`"partial"`/`"skipped"`/
+/// `"failed"`), so the JSON output stays byte-identical — but the contract is
+/// now closed over a fixed set of variants instead of being stringly-typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DownloadStatus {
+    Ok,
+    Partial,
+    Skipped,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DownloadItem {
+    pub url: String,
+    pub status: DownloadStatus,
+    pub title: Option<String>,
+    pub video_id: Option<String>,
+    pub duration: Option<f64>,
+    pub uploader: Option<String>,
+    pub is_playlist: bool,
+    pub error: Option<String>,
+    pub files: Vec<DownloadFile>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct DownloadFile {
+    pub name: Option<String>,
+    pub kind: &'static str,
+    pub bytes: u64,
+    pub title: Option<String>,
+    pub video_id: Option<String>,
+    pub uploader: Option<String>,
+    pub duration: Option<f64>,
+}
 
 pub(crate) fn render(
     payload: &serde_json::Value,
@@ -19,36 +110,49 @@ pub(crate) fn render(
     }
 }
 
-pub(crate) fn download_payload(
+/// Render the typed download payload. The typed struct is the source of truth;
+/// it is serialized to a `Value` exactly once here, at the rendering boundary,
+/// for both the JSON output and the (still `Value`-based) markdown renderer.
+pub(crate) fn render_download(payload: &DownloadPayload, fmt: ResponseFormat) -> String {
+    let value = serde_json::to_value(payload).unwrap_or_default();
+    render(&value, fmt, render_download_markdown)
+}
+
+/// Build the typed download payload. This is the schema source of truth used by
+/// the orchestrator (`service.rs`), the markdown renderer, and the history
+/// ledger; field renames are now compile-checked at every consumer.
+pub(crate) fn build_download_payload(
     results: &[ItemResult],
     remote: &str,
     dests: &[(&str, &str)],
     transferred: bool,
     transfer_error: Option<String>,
     staging_kept: Option<&Path>,
-) -> serde_json::Value {
-    let items: Vec<serde_json::Value> = results
+) -> DownloadPayload {
+    let items: Vec<DownloadItem> = results
         .iter()
-        .map(|r| {
-            json!({
-                "url": r.url,
-                "status": item_status(r),
-                "title": r.title,
-                "video_id": r.video_id,
-                "duration": r.duration,
-                "uploader": r.uploader,
-                "is_playlist": r.is_playlist,
-                "error": r.error,
-                "files": r.files.iter().map(|f| json!({
-                    "name": f.path.file_name().map(|n| n.to_string_lossy().to_string()),
-                    "kind": f.kind,
-                    "bytes": f.size,
-                    "title": f.title,
-                    "video_id": f.video_id,
-                    "uploader": f.uploader,
-                    "duration": f.duration,
-                })).collect::<Vec<_>>(),
-            })
+        .map(|r| DownloadItem {
+            url: r.url.clone(),
+            status: item_status(r),
+            title: r.title.clone(),
+            video_id: r.video_id.clone(),
+            duration: r.duration,
+            uploader: r.uploader.clone(),
+            is_playlist: r.is_playlist,
+            error: r.error.clone(),
+            files: r
+                .files
+                .iter()
+                .map(|f| DownloadFile {
+                    name: f.path.file_name().map(|n| n.to_string_lossy().to_string()),
+                    kind: f.kind,
+                    bytes: f.size,
+                    title: f.title.clone(),
+                    video_id: f.video_id.clone(),
+                    uploader: f.uploader.clone(),
+                    duration: f.duration,
+                })
+                .collect(),
         })
         .collect();
     let total_files: usize = results.iter().map(|r| r.files.len()).sum();
@@ -73,31 +177,62 @@ pub(crate) fn download_payload(
                 .join(", "),
         )
     };
-    json!({
-        "transferred": transferred,
-        "transfer_error": transfer_error,
-        "remote": remote,
-        "dest_path": primary,
-        "destination": destination,
-        "destinations": dests.iter().map(|(kind, d)| json!({
-            "kind": kind, "dest_path": d, "destination": format!("{remote}:{d}"),
-        })).collect::<Vec<_>>(),
-        "staging_kept_at": staging_kept.map(|p| p.display().to_string()),
-        "total_files": total_files,
-        "total_bytes": total_bytes,
-        "total_size": human_size(total_bytes),
-        "partial_items": partial_items,
-        "failed_items": failed_items,
-        "items": items,
-    })
+    DownloadPayload {
+        transferred,
+        transfer_error,
+        remote: remote.to_string(),
+        dest_path: primary.to_string(),
+        destination,
+        destinations: dests
+            .iter()
+            .map(|(kind, d)| DownloadDestination {
+                kind: (*kind).to_string(),
+                dest_path: (*d).to_string(),
+                destination: format!("{remote}:{d}"),
+            })
+            .collect(),
+        staging_kept_at: staging_kept.map(|p| p.display().to_string()),
+        total_files,
+        total_bytes,
+        total_size: human_size(total_bytes),
+        partial_items,
+        failed_items,
+        items,
+        metadata_retag: None,
+        plex_playlist: None,
+        plex_playlist_error: None,
+        history_error: None,
+    }
 }
 
-fn item_status(result: &ItemResult) -> &'static str {
+/// `Value` view of [`build_download_payload`], retained for tests that assert on
+/// the rendered JSON shape by key. Production code uses the typed builder.
+#[cfg(test)]
+pub(crate) fn download_payload(
+    results: &[ItemResult],
+    remote: &str,
+    dests: &[(&str, &str)],
+    transferred: bool,
+    transfer_error: Option<String>,
+    staging_kept: Option<&Path>,
+) -> serde_json::Value {
+    serde_json::to_value(build_download_payload(
+        results,
+        remote,
+        dests,
+        transferred,
+        transfer_error,
+        staging_kept,
+    ))
+    .expect("download payload serializes")
+}
+
+fn item_status(result: &ItemResult) -> DownloadStatus {
     match (result.error.is_some(), result.files.is_empty()) {
-        (true, true) => "failed",
-        (true, false) => "partial",
-        (false, true) => "skipped",
-        (false, false) => "ok",
+        (true, true) => DownloadStatus::Failed,
+        (true, false) => DownloadStatus::Partial,
+        (false, true) => DownloadStatus::Skipped,
+        (false, false) => DownloadStatus::Ok,
     }
 }
 
@@ -234,7 +369,7 @@ pub(crate) fn render_probe_markdown(p: &serde_json::Value) -> String {
         if r["is_playlist"].as_bool().unwrap_or(false) {
             lines.push(format!(
                 "- {title} - playlist, {} item(s)",
-                r["entry_count"]
+                r["entry_count"].as_u64().unwrap_or(0)
             ));
         } else {
             let mut s = format!("- {title} - {}", human_duration(r["duration"].as_f64()));

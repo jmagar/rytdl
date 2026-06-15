@@ -5,15 +5,18 @@
 //! and reads back what it produced via `--print after_move:`.
 
 use std::path::{Path, PathBuf};
-use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use anyhow::{bail, Result};
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::bootstrap::Tools;
 use crate::model::{AudioFormat, DownloadMode, SearchResultItem, VideoContainer};
+use crate::util::{command_error, is_http_url, json_str, run_capped, CommandOutput};
+// Re-exported for `downloader_tests.rs`, which exercises the shared
+// tail-truncation logic via this module's `super::*` glob.
+#[cfg(test)]
+pub(crate) use crate::util::stderr_tail_text;
 
 mod probe;
 
@@ -60,13 +63,6 @@ pub struct FetchOptions<'a> {
     pub clean_metadata: bool,
 }
 
-#[derive(Debug)]
-struct CommandOutput {
-    status: ExitStatus,
-    stdout: Vec<u8>,
-    stderr: String,
-}
-
 /// Non-greedy "Artist - Title" split applied to the title field so the artist
 /// populates tags + the output folder. No-op when the title has no " - ".
 const PARSE_ARTIST: &str = r"title:(?P<artist>.+?) - (?P<title>.+)";
@@ -99,6 +95,29 @@ fn output_template(staging: &Path, kind: &str) -> String {
 /// The `--print` template emitted once per produced file, after the final move.
 fn print_template() -> String {
     format!("after_move:%(id)s{SEP}%(title)s{SEP}%(uploader)s{SEP}%(duration)s{SEP}%(filepath)s")
+}
+
+/// Append the end-of-options separator and the user-controlled positional.
+///
+/// end-of-options: a `--` before the positional prevents a '-'-prefixed value
+/// (e.g. `--exec`, `--config-locations`, `-o`) from being parsed as a yt-dlp
+/// flag → arbitrary command exec (F2). The positional is always the last argv
+/// element and always preceded immediately by `--`.
+fn positional_after_end_of_options(mut args: Vec<String>, positional: &str) -> Vec<String> {
+    args.push("--".into());
+    args.push(positional.to_string());
+    args
+}
+
+/// Parse one `--print` line into `(id, title, uploader, duration, filepath)`.
+/// Returns `None` for any line that doesn't have exactly the five expected
+/// SEP-delimited fields (e.g. stray/malformed output), so callers can skip it.
+fn parse_print_line(line: &str) -> Option<(&str, &str, &str, &str, &str)> {
+    let parts: Vec<&str> = line.split(SEP).collect();
+    if parts.len() != 5 {
+        return None;
+    }
+    Some((parts[0], parts[1], parts[2], parts[3], parts[4]))
 }
 
 fn common_args(staging: &Path, kind: &str, tools: &Tools, archive: Option<&Path>) -> Vec<String> {
@@ -205,22 +224,23 @@ async fn run_pass(
     timeout: Option<Duration>,
     result: &mut ItemResult,
 ) -> Result<()> {
+    let argv = positional_after_end_of_options(args, url);
     let mut cmd = Command::new(ytdlp);
-    cmd.args(&args).arg(url);
+    cmd.args(&argv);
     let output = run_command(&mut cmd, timeout).await?;
     if !output.status.success() {
-        bail!("{}", command_error_text(&output.stderr, &output.stdout));
+        bail!(
+            "{}",
+            command_error((output.stderr.as_str(), output.stdout.as_slice()))
+        );
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut count = 0;
     for line in stdout.lines() {
-        let parts: Vec<&str> = line.split(SEP).collect();
-        if parts.len() != 5 {
+        let Some((id, title, uploader, duration, filepath)) = parse_print_line(line) else {
             continue;
-        }
-        let (id, title, uploader, duration, filepath) =
-            (parts[0], parts[1], parts[2], parts[3], parts[4]);
+        };
         result.video_id.get_or_insert_with(|| id.to_string());
         result.title.get_or_insert_with(|| title.to_string());
         if result.uploader.is_none() && uploader != "NA" {
@@ -255,7 +275,6 @@ async fn run_pass(
 
 /// Download one URL per `mode`, returning the per-URL outcome. `mode = both`
 /// runs two passes (video then audio) into their own staging subdirs.
-#[allow(clippy::too_many_arguments)]
 pub async fn fetch(tools: &Tools, url: &str, options: FetchOptions<'_>) -> ItemResult {
     let mut result = ItemResult {
         url: url.to_string(),
@@ -341,35 +360,35 @@ fn search_result_item(entry: &serde_json::Value) -> Option<SearchResultItem> {
     if entry.is_null() {
         return None;
     }
-    let title = str_field(entry, "title")?;
+    let title = json_str(entry, "title")?;
     let url = search_result_url(entry)?;
     Some(SearchResultItem {
         title,
         url,
-        video_id: str_field(entry, "id"),
-        uploader: str_field(entry, "uploader").or_else(|| str_field(entry, "channel")),
+        video_id: json_str(entry, "id"),
+        uploader: json_str(entry, "uploader").or_else(|| json_str(entry, "channel")),
         duration: entry.get("duration").and_then(|d| d.as_f64()),
-        thumbnail: str_field(entry, "thumbnail"),
+        thumbnail: json_str(entry, "thumbnail"),
         view_count: entry.get("view_count").and_then(|v| v.as_u64()),
     })
 }
 
 fn search_result_url(entry: &serde_json::Value) -> Option<String> {
-    if let Some(url) = str_field(entry, "webpage_url") {
+    if let Some(url) = json_str(entry, "webpage_url") {
         return Some(url);
     }
-    if let Some(url) = str_field(entry, "url").filter(|url| is_http_url(url)) {
+    if let Some(url) = json_str(entry, "url").filter(|url| is_http_url(url)) {
         return Some(url);
     }
-    str_field(entry, "id").map(|id| format!("https://www.youtube.com/watch?v={id}"))
-}
-
-fn is_http_url(value: &str) -> bool {
-    value.starts_with("https://") || value.starts_with("http://")
+    json_str(entry, "id").map(|id| format!("https://www.youtube.com/watch?v={id}"))
 }
 
 pub(crate) fn search_spec(query: &str, limit: u32) -> String {
-    format!("ytsearch{}:{}", limit.clamp(1, 25), query.trim())
+    format!(
+        "ytsearch{}:{}",
+        limit.clamp(1, crate::model::MAX_SEARCH_LIMIT),
+        query.trim()
+    )
 }
 
 pub async fn search_youtube(
@@ -389,114 +408,25 @@ pub async fn search_youtube(
     if let Some(extra) = extractor_args {
         cmd.arg("--extractor-args").arg(extra);
     }
-    cmd.arg(search_spec(query, limit));
+    // end-of-options: the spec is prefixed with `ytsearch{N}:` so it can't lead
+    // with '-', but keep the guard for defense-in-depth/consistency (F2).
+    cmd.arg("--").arg(search_spec(query, limit));
 
     let output = run_command(&mut cmd, timeout).await?;
     if !output.status.success() {
-        bail!("{}", command_error_text(&output.stderr, &output.stdout));
+        bail!(
+            "{}",
+            command_error((output.stderr.as_str(), output.stdout.as_slice()))
+        );
     }
 
     parse_search_json(&output.stdout)
 }
 
-fn str_field(v: &serde_json::Value, key: &str) -> Option<String> {
-    v.get(key)
-        .and_then(|x| x.as_str())
-        .map(ToOwned::to_owned)
-        .filter(|s| !s.is_empty())
-}
-
-fn command_error_text(stderr: &str, stdout: &[u8]) -> String {
-    let err = stderr.trim();
-    if err.is_empty() {
-        String::from_utf8_lossy(stdout).trim().to_string()
-    } else {
-        err.to_string()
-    }
-}
-
+/// Run a yt-dlp subprocess via the shared runner, capping stderr to the last
+/// 16 KiB. Thin wrapper kept for `downloader.rs`/`probe.rs` call sites.
 async fn run_command(cmd: &mut Command, timeout: Option<Duration>) -> Result<CommandOutput> {
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let mut child = spawn_with_retry(cmd).await?;
-    let mut stdout = child.stdout.take().expect("stdout piped");
-    let mut stderr = child.stderr.take().expect("stderr piped");
-
-    let stdout_task = tokio::spawn(async move {
-        let mut out = Vec::new();
-        stdout.read_to_end(&mut out).await.map(|_| out)
-    });
-    let stderr_task = tokio::spawn(async move {
-        let mut buf = [0_u8; 8192];
-        let mut tail = Vec::new();
-        loop {
-            let read = stderr.read(&mut buf).await?;
-            if read == 0 {
-                break;
-            }
-            append_tail(&mut tail, &buf[..read], STDERR_TAIL_BYTES);
-        }
-        Ok::<_, std::io::Error>(stderr_tail_text(&tail, STDERR_TAIL_BYTES))
-    });
-
-    let status = if let Some(limit) = timeout {
-        match tokio::time::timeout(limit, child.wait()).await {
-            Ok(status) => status?,
-            Err(_) => {
-                let _ = child.kill().await;
-                bail!("command timed out after {}s", limit.as_secs());
-            }
-        }
-    } else {
-        child.wait().await?
-    };
-
-    let stdout = stdout_task.await??;
-    let stderr = stderr_task.await??;
-    Ok(CommandOutput {
-        status,
-        stdout,
-        stderr,
-    })
-}
-
-async fn spawn_with_retry(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
-    let mut attempts = 0;
-    loop {
-        match cmd.spawn() {
-            Ok(child) => return Ok(child),
-            Err(error) if is_executable_busy(&error) && attempts < 5 => {
-                attempts += 1;
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-            Err(error) => return Err(error),
-        }
-    }
-}
-
-fn is_executable_busy(error: &std::io::Error) -> bool {
-    error.raw_os_error() == Some(26)
-}
-
-fn append_tail(tail: &mut Vec<u8>, chunk: &[u8], limit: usize) {
-    tail.extend_from_slice(chunk);
-    if tail.len() > limit {
-        let excess = tail.len() - limit;
-        tail.drain(..excess);
-    }
-}
-
-fn stderr_tail_text(bytes: &[u8], limit: usize) -> String {
-    let truncated = bytes.len() >= limit;
-    let mut text = String::from_utf8_lossy(bytes).to_string();
-    if truncated {
-        if let Some(pos) = text.find('\n') {
-            text.drain(..=pos);
-        }
-        text.insert_str(0, "[stderr truncated]\n");
-    }
-    text
+    run_capped(cmd, timeout, Some(STDERR_TAIL_BYTES)).await
 }
 
 #[cfg(test)]

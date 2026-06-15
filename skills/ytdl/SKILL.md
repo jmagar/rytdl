@@ -9,7 +9,7 @@ Download media from any [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported sit
 audio, video, or both, embed proper metadata + cover art, and transfer the result
 to an SSH remote configured when the plugin was enabled.
 
-Five MCP tools are provided by the bundled `youtube-dl` server:
+Six MCP tools are provided by the bundled `ytdl-mcp` server:
 
 | Tool | Purpose |
 | --- | --- |
@@ -17,6 +17,7 @@ Five MCP tools are provided by the bundled `youtube-dl` server:
 | `youtube_search_ui` | Open an interactive YouTube search UI in MCP App-capable hosts. |
 | `youtube_download` | Download one or more URLs and transfer them to the remote with rsync or scp. |
 | `youtube_probe` | Read-only: resolve title/duration/uploader/format counts without downloading. |
+| `youtube_identify` | Fingerprint local audio with `fpcalc`, return AcoustID/MusicBrainz candidates, preview canonical tags, and optionally write high-confidence tags. |
 | `youtube_stats` | Summarize the persistent download ledger with totals, kinds, uploaders, and recent entries. |
 
 ## Defaults

@@ -1,4 +1,8 @@
-use std::{ffi::OsString, path::PathBuf, sync::OnceLock};
+use std::{
+    ffi::OsString,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+};
 
 use super::*;
 use crate::identify::{IdentifyPayload, IdentifyResult, RetagPreview, TagWriteResult};
@@ -92,7 +96,9 @@ async fn run_download_json_appends_history_entry_with_destination_and_files() {
         ))
     };
 
-    let output = run_download(&cfg, input).await.unwrap();
+    let output = run_download(&Arc::new(cfg), &ToolsCache::default(), input)
+        .await
+        .unwrap();
     let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
     assert_eq!(payload["transferred"], true);
 
@@ -113,6 +119,56 @@ async fn run_download_json_appends_history_entry_with_destination_and_files() {
         "https://www.youtube.com/watch?v=abc123"
     );
     assert_eq!(entry["items"][0]["files"][0]["kind"], "video");
+}
+
+/// TA-1: the C1 reactor-blocking offload. `run_download` performs blocking work
+/// (archive/staging `std::fs` prep, tool resolution) that must be moved off the
+/// reactor via `spawn_blocking`. This drives the full path on a SINGLE-THREADED
+/// (`current_thread`) runtime and asserts it COMPLETES within a tight timeout.
+///
+/// This is an INDIRECT proxy for "blocking work is offloaded": if a regression
+/// moved a genuinely-blocking call back inline onto the single reactor thread —
+/// such that it blocks while the runtime also needs that thread to drive the
+/// spawned ssh/rsync child-process futures to completion — the future would
+/// stall and the timeout would fire fast instead of the suite hanging.
+#[tokio::test(flavor = "current_thread")]
+async fn run_download_completes_on_single_threaded_runtime() {
+    let _guard = path_lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    let staging = dir.path().join("staging");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    let fake = write_fake_runtime(&bin);
+
+    let _path = PathOverride::prepend(bin.clone());
+
+    let mut cfg = test_config();
+    cfg.ytdlp_path = Some(fake.ytdlp.display().to_string());
+    cfg.ffmpeg_path = Some(fake.ffmpeg.display().to_string());
+    cfg.staging_dir = Some(staging.display().to_string());
+
+    let input = DownloadInput {
+        mode: DownloadMode::Video,
+        remote: Some("media".into()),
+        dest_path: Some("/audio".into()),
+        video_dest_path: Some("/video".into()),
+        response_format: ResponseFormat::Json,
+        ..download_input(Urls::One("https://www.youtube.com/watch?v=abc123".into()))
+    };
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        run_download(&Arc::new(cfg), &ToolsCache::default(), input),
+    )
+    .await
+    .expect("run_download must complete; a hang means blocking work landed back on the reactor")
+    .expect("download should succeed with the fake runtime");
+
+    let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(payload["transferred"], true);
+    assert_eq!(payload["total_files"], 1);
 }
 
 #[tokio::test]
@@ -145,7 +201,9 @@ async fn run_download_json_reports_history_error_without_failing_download() {
         ..download_input(Urls::One("https://www.youtube.com/watch?v=abc123".into()))
     };
 
-    let output = run_download(&cfg, input).await.unwrap();
+    let output = run_download(&Arc::new(cfg), &ToolsCache::default(), input)
+        .await
+        .unwrap();
     let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
 
     assert_eq!(payload["transferred"], true);
@@ -166,7 +224,8 @@ async fn run_search_json_uses_fake_ytdlp_and_records_effective_args() {
     cfg.extractor_args = Some("youtube:player_client=android".into());
 
     let output = run_search(
-        &cfg,
+        &Arc::new(cfg),
+        &ToolsCache::default(),
         SearchInput {
             query: "  slow pulp live  ".into(),
             limit: 100,
@@ -196,7 +255,8 @@ async fn run_search_rejects_empty_query_before_tool_resolution() {
     cfg.ytdlp_path = Some("/definitely/not/a/yt-dlp".into());
 
     let err = run_search(
-        &cfg,
+        &Arc::new(cfg),
+        &ToolsCache::default(),
         SearchInput {
             query: "   ".into(),
             limit: 10,
@@ -223,7 +283,10 @@ async fn invalid_transfer_target_is_rejected_before_tool_resolution() {
         ..download_input(Urls::One("https://example.test/watch".into()))
     };
 
-    let err = run_download(&cfg, input).await.unwrap_err().to_string();
+    let err = run_download(&Arc::new(cfg), &ToolsCache::default(), input)
+        .await
+        .unwrap_err()
+        .to_string();
 
     assert!(err.contains("SSH remote must not start with '-'"));
     assert!(!err.contains("YTDLP_PATH"));
@@ -258,7 +321,7 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
         ..download_input(Urls::One("https://example.test/watch".into()))
     };
 
-    let output = run_download(&cfg, input).await;
+    let output = run_download(&Arc::new(cfg), &ToolsCache::default(), input).await;
 
     let value: serde_json::Value = serde_json::from_str(&output.unwrap()).unwrap();
     assert_eq!(value["transferred"], true);
@@ -272,13 +335,87 @@ async fn run_download_json_reports_partial_status_with_fake_runtime() {
 }
 
 #[tokio::test]
+async fn run_download_json_retains_staging_when_transfer_fails() {
+    let _guard = path_lock().await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    let staging = dir.path().join("staging");
+    let history = dir.path().join("downloads.jsonl");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&staging).unwrap();
+    // Fake runtime downloads a video file successfully but rsync exits non-zero,
+    // so the transfer phase fails and staging must be kept for retry.
+    let fake = write_fake_runtime_failing_transfer(&bin);
+
+    let _path = PathOverride::prepend(bin.clone());
+
+    let mut cfg = test_config();
+    cfg.ytdlp_path = Some(fake.ytdlp.display().to_string());
+    cfg.ffmpeg_path = Some(fake.ffmpeg.display().to_string());
+    cfg.staging_dir = Some(staging.display().to_string());
+    cfg.history_path = Some(history.display().to_string());
+
+    let input = DownloadInput {
+        mode: DownloadMode::Video,
+        remote: Some("media".into()),
+        dest_path: Some("/audio".into()),
+        video_dest_path: Some("/video".into()),
+        response_format: ResponseFormat::Json,
+        ..download_input(Urls::One("https://www.youtube.com/watch?v=abc123".into()))
+    };
+
+    let output = run_download(&Arc::new(cfg), &ToolsCache::default(), input)
+        .await
+        .unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+    // Download itself succeeded (one video file), but the transfer failed.
+    assert_eq!(payload["total_files"], 1);
+    assert_eq!(payload["transferred"], false);
+
+    let transfer_error = payload["transfer_error"]
+        .as_str()
+        .expect("transfer_error should be present on a failed transfer");
+    assert!(
+        !transfer_error.is_empty(),
+        "transfer_error should be a non-empty message, got {transfer_error:?}"
+    );
+
+    // Staging is kept for retry: a real path, and it still exists on disk.
+    let kept = payload["staging_kept_at"]
+        .as_str()
+        .expect("staging_kept_at should be set when the transfer fails");
+    assert!(
+        std::path::Path::new(kept).is_dir(),
+        "kept staging dir {kept} should still exist on disk for retry"
+    );
+
+    // The item downloaded fine, so its per-item status stays ok; the kept-for-retry
+    // state is reflected at the payload level (transferred:false + staging_kept_at).
+    assert_eq!(payload["items"][0]["status"], "ok");
+    assert_eq!(payload["items"][0]["files"][0]["kind"], "video");
+
+    // History records the attempt with transferred:false.
+    let lines = std::fs::read_to_string(&history).unwrap();
+    let entries = lines.lines().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry: serde_json::Value = serde_json::from_str(entries[0]).unwrap();
+    assert_eq!(entry["transferred"], false);
+    assert_eq!(entry["total_files"], 1);
+
+    // Clean up the leaked staging dir the retry path intentionally kept.
+    let _ = std::fs::remove_dir_all(kept);
+}
+
+#[tokio::test]
 async fn auto_retag_audio_paths_writes_when_acoustid_is_configured() {
     let mut cfg = test_config();
     cfg.acoustid_client_key = Some("test-key".into());
     let paths = vec!["/tmp/song.mp3".to_string()];
     let expected_paths = paths.clone();
 
-    let summary = auto_retag_audio_paths_for_test(&cfg, paths, move |_cfg, paths| {
+    let summary = auto_retag_audio_paths_for_test(&Arc::new(cfg), paths, move |_cfg, paths| {
         let expected_paths = expected_paths.clone();
         Box::pin(async move {
             assert_eq!(paths, expected_paths);
@@ -446,6 +583,91 @@ esac
         perms.set_mode(0o755);
         std::fs::set_permissions(path, perms).unwrap();
     }
+    FakeRuntime { ytdlp, ffmpeg }
+}
+
+/// Fake runtime whose yt-dlp always downloads a video file successfully, but
+/// whose `rsync` exits non-zero so the transfer phase fails. Drives the
+/// transfer-failure → staging-retained branch of `run_download`.
+#[cfg(unix)]
+fn write_fake_runtime_failing_transfer(bin: &std::path::Path) -> FakeRuntime {
+    use std::os::unix::fs::PermissionsExt;
+
+    let ytdlp = bin.join("yt-dlp");
+    std::fs::write(
+        &ytdlp,
+        r#"#!/bin/sh
+set -eu
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+staging="${out%%/video/*}"
+file="$staging/video/Fake Artist/Fake Title [vid123].mp4"
+mkdir -p "$(dirname "$file")"
+printf "video bytes" > "$file"
+printf 'vid123\037Fake Title\037Fake Artist\03712.5\037%s\n' "$file"
+"#,
+    )
+    .unwrap();
+    let ffmpeg = bin.join("ffmpeg");
+    std::fs::write(&ffmpeg, b"#!/bin/sh\nexit 0\n").unwrap();
+    let ssh = bin.join("ssh");
+    std::fs::write(&ssh, b"#!/bin/sh\nexit 0\n").unwrap();
+    // rsync fails: this is what drives the transfer-failure branch.
+    let rsync = bin.join("rsync");
+    std::fs::write(
+        &rsync,
+        b"#!/bin/sh\nprintf 'rsync: connection refused\\n' >&2\nexit 12\n",
+    )
+    .unwrap();
+    for path in [&ytdlp, &ffmpeg, &ssh, &rsync] {
+        let mut perms = std::fs::metadata(path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms).unwrap();
+    }
+    FakeRuntime { ytdlp, ffmpeg }
+}
+
+#[cfg(windows)]
+fn write_fake_runtime_failing_transfer(bin: &std::path::Path) -> FakeRuntime {
+    let ytdlp = bin.join("yt-dlp.cmd");
+    let ytdlp_ps1 = bin.join("fake-ytdlp-xfer.ps1");
+    std::fs::write(
+        &ytdlp,
+        "@powershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0fake-ytdlp-xfer.ps1\" %*\r\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &ytdlp_ps1,
+        r#"$out = ""
+for ($i = 0; $i -lt $args.Count; $i++) {
+  if ($args[$i] -eq "-o" -and ($i + 1) -lt $args.Count) {
+    $out = $args[$i + 1]
+    $i++
+  }
+}
+$staging = $out -replace "\\video\\.*$", ""
+$file = Join-Path $staging "video\Fake Artist\Fake Title [vid123].mp4"
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file) | Out-Null
+Set-Content -NoNewline -Path $file -Value "video bytes"
+Write-Output ("vid123{0}Fake Title{0}Fake Artist{0}12.5{0}{1}" -f [char]31, $file)
+"#,
+    )
+    .unwrap();
+    let ffmpeg = bin.join("ffmpeg.cmd");
+    std::fs::write(&ffmpeg, "@exit /b 0\r\n").unwrap();
+    std::fs::write(bin.join("ssh.cmd"), "@exit /b 0\r\n").unwrap();
+    // rsync fails: this is what drives the transfer-failure branch.
+    std::fs::write(
+        bin.join("rsync.cmd"),
+        "@echo rsync: connection refused 1>&2\r\n@exit /b 12\r\n",
+    )
+    .unwrap();
     FakeRuntime { ytdlp, ffmpeg }
 }
 
