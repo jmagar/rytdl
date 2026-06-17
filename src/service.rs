@@ -9,7 +9,9 @@ mod plex_tracks;
 mod retag;
 
 use anyhow::{bail, Result};
-use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::OnceCell;
@@ -77,6 +79,7 @@ pub async fn run_download(
     cache: &ToolsCache,
     input: DownloadInput,
 ) -> Result<String> {
+    let started = std::time::Instant::now();
     let remote = input.remote.clone().or_else(|| cfg.remote.clone());
     let audio_dest = input.dest_path.clone().or_else(|| cfg.dest_path.clone());
     let video_dest = input
@@ -109,9 +112,19 @@ pub async fn run_download(
     // Download every URL (mix/radio cleaned first). Scheme-validate as a
     // defense-in-depth backstop (the `--` end-of-options guard at each yt-dlp
     // call site is the primary fix for option-injection).
+    let validated_urls = input.urls.clone().into_validated_vec()?;
+    tracing::info!(
+        service = "ytdl-mcp",
+        action = "run_download",
+        url_count = validated_urls.len(),
+        mode = ?input.mode,
+        remote = %remote,
+        "download start"
+    );
     let mut results: Vec<ItemResult> = Vec::new();
-    for raw in input.urls.clone().into_validated_vec()? {
+    for raw in validated_urls {
         let url = strip_mix_params(&raw);
+        tracing::debug!(service = "ytdl-mcp", action = "fetch", url = %url, mode = ?input.mode, "fetch start");
         let r = downloader::fetch(
             &tools,
             &url,
@@ -128,6 +141,10 @@ pub async fn run_download(
             },
         )
         .await;
+        match r.error.as_deref() {
+            None => tracing::info!(service = "ytdl-mcp", action = "fetch", url = %url, file_count = r.files.len(), "fetch complete"),
+            Some(e) => tracing::warn!(service = "ytdl-mcp", action = "fetch", url = %url, error = %e, "fetch error"),
+        }
         results.push(r);
     }
 
@@ -165,22 +182,70 @@ pub async fn run_download(
     let mut transfer_error: Option<String> = None;
     for (kind, dest) in &transfer_dests {
         let kind_dir = staging_path.join(kind);
+        #[cfg(not(windows))]
         if !kind_dir.is_dir() {
             continue;
         }
         let ssh_opts = cfg.all_ssh_opts();
+        tracing::info!(
+            service = "ytdl-mcp",
+            action = "transfer",
+            kind = %kind,
+            remote = %target.remote().as_str(),
+            dest = %dest.as_str(),
+            "transfer start"
+        );
+        #[cfg(windows)]
+        let kind_files: Vec<PathBuf> = results
+            .iter()
+            .flat_map(|r| &r.files)
+            .filter(|f| f.kind == *kind)
+            .map(|f| f.path.clone())
+            .collect();
+        #[cfg(windows)]
+        let transfer = crate::transfer::transfer_file_paths(
+            &kind_files,
+            &kind_dir,
+            target.remote(),
+            dest,
+            &ssh_opts,
+        );
+        #[cfg(not(windows))]
         let transfer = transfer_kind(&kind_dir, target.remote(), dest, &ssh_opts);
         match tokio::time::timeout(cfg.transfer_timeout(), transfer).await {
-            Ok(Ok(())) => {}
+            Ok(Ok(())) => {
+                tracing::info!(
+                    service = "ytdl-mcp",
+                    action = "transfer",
+                    kind = %kind,
+                    dest = %dest.as_str(),
+                    "transfer success"
+                );
+            }
             Ok(Err(e)) => {
+                tracing::warn!(
+                    service = "ytdl-mcp",
+                    action = "transfer",
+                    kind = %kind,
+                    error = %e,
+                    "transfer error"
+                );
                 transfer_error = Some(e.to_string());
                 break;
             }
             Err(_) => {
-                transfer_error = Some(format!(
+                let msg = format!(
                     "transfer of {kind} timed out after {}s",
                     cfg.transfer_timeout().as_secs()
-                ));
+                );
+                tracing::warn!(
+                    service = "ytdl-mcp",
+                    action = "transfer",
+                    kind = %kind,
+                    timeout_secs = cfg.transfer_timeout().as_secs(),
+                    "transfer timeout"
+                );
+                transfer_error = Some(msg);
                 break;
             }
         }
@@ -209,9 +274,19 @@ pub async fn run_download(
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
     }
     record_history(cfg, input.mode, &mut payload).await;
+    tracing::info!(
+        service = "ytdl-mcp",
+        action = "run_download",
+        mode = ?input.mode,
+        transferred,
+        elapsed_ms = started.elapsed().as_millis(),
+        transfer_error = transfer_error.as_deref(),
+        "download complete"
+    );
     Ok(render_download(&payload, input.response_format))
 }
 
+#[cfg(not(windows))]
 async fn transfer_kind(
     dir: &Path,
     remote: &crate::transfer::RemoteSpec,
@@ -298,21 +373,46 @@ async fn resolve_ytdlp(cfg: &Arc<Config>) -> Result<Arc<PathBuf>> {
 }
 
 pub async fn run_probe(cfg: &Arc<Config>, cache: &ToolsCache, input: ProbeInput) -> Result<String> {
+    let started = std::time::Instant::now();
     let ytdlp = ensure_ytdlp(cfg, cache).await?;
+    let validated_urls = input.urls.into_validated_vec()?;
+    tracing::info!(
+        service = "ytdl-mcp",
+        action = "run_probe",
+        url_count = validated_urls.len(),
+        "probe start"
+    );
     let mut results = Vec::new();
-    for raw in input.urls.into_validated_vec()? {
+    for raw in validated_urls {
         let url = strip_mix_params(&raw);
-        results.push(
-            downloader::probe(
-                &ytdlp,
-                &url,
-                cfg.extractor_args.as_deref(),
-                Some(cfg.ytdlp_timeout()),
-            )
-            .await,
-        );
+        tracing::debug!(service = "ytdl-mcp", action = "probe", url = %url, "probe url start");
+        let result = downloader::probe(
+            &ytdlp,
+            &url,
+            cfg.extractor_args.as_deref(),
+            Some(cfg.ytdlp_timeout()),
+        )
+        .await;
+        match result.error.as_deref() {
+            None => tracing::info!(
+                service = "ytdl-mcp",
+                action = "probe",
+                url = %url,
+                title = result.title.as_deref().unwrap_or("(unknown)"),
+                duration_s = result.duration.unwrap_or(0.0),
+                "probe url success"
+            ),
+            Some(e) => tracing::warn!(service = "ytdl-mcp", action = "probe", url = %url, error = %e, "probe url error"),
+        }
+        results.push(result);
     }
     let payload = probe_payload(&results);
+    tracing::info!(
+        service = "ytdl-mcp",
+        action = "run_probe",
+        elapsed_ms = started.elapsed().as_millis(),
+        "probe complete"
+    );
     Ok(render(
         &payload,
         input.response_format,
@@ -335,6 +435,7 @@ pub async fn run_search_payload(
     cache: &ToolsCache,
     input: &SearchInput,
 ) -> Result<SearchPayload> {
+    let started = std::time::Instant::now();
     let query = input.query.trim();
     if query.is_empty() {
         bail!("Search query cannot be empty.");
@@ -342,6 +443,7 @@ pub async fn run_search_payload(
 
     let ytdlp = ensure_ytdlp(cfg, cache).await?;
     let limit = input.effective_limit();
+    tracing::info!(service = "ytdl-mcp", action = "run_search", query = %query, limit, "search start");
     let results = downloader::search_youtube(
         &ytdlp,
         query,
@@ -351,6 +453,14 @@ pub async fn run_search_payload(
     )
     .await?;
 
+    tracing::info!(
+        service = "ytdl-mcp",
+        action = "run_search",
+        query = %query,
+        result_count = results.len(),
+        elapsed_ms = started.elapsed().as_millis(),
+        "search complete"
+    );
     Ok(SearchPayload {
         query: query.to_string(),
         limit,
