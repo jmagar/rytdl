@@ -1,6 +1,5 @@
 {
   "name": "ytdl-mcp",
-  "version": "0.7.0",
   "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
   "author": {
     "name": "Jacob Magar"

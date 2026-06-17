@@ -68,7 +68,18 @@ fetch() { # fetch <url> <out>; prints to stdout via -O- when out is "-"
 # download to a temp file, verify, then atomically move into place
 tmp="$BIN.part"
 log "downloading $asset"
-fetch "$url" "$tmp"
+if ! fetch "$url" "$tmp"; then
+  if [ "$release_path" != "latest/download" ]; then
+    rm -f "$tmp"
+    release_path="latest/download"
+    url="https://github.com/$REPO/releases/$release_path/$asset"
+    log "no exact v$VERSION release asset found; falling back to latest release"
+    fetch "$url" "$tmp"
+  else
+    rm -f "$tmp"
+    exit 1
+  fi
+fi
 
 # Verify against the release's published checksum. Current releases built by
 # .github/workflows/release.yml publish <asset>.sha256, so a missing checksum is
