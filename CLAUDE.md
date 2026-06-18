@@ -6,6 +6,15 @@ Rust, built on the `rmcp` crate. yt-dlp + ffmpeg are auto-downloaded at runtime.
 
 User-facing docs live in `README.md`. This file is for working **on** the repo.
 
+## Long-Lived Branches
+
+- `marketplace-no-mcp` is an intentional long-lived marketplace variant branch,
+  not stale cleanup. It keeps the ytdl-mcp plugin/skill surface available while
+  removing bundled MCP server registration for environments where the server is
+  already connected through the Labby gateway.
+- Do not merge `marketplace-no-mcp` into `main` by default, and do not delete it
+  as stale unless Jacob explicitly retires the no-MCP marketplace variant.
+
 ## Architecture (module layout)
 
 `src/`, all files < 500 LOC, `foo.rs` + `foo/` (never `mod.rs`):
