@@ -194,10 +194,8 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 ### Distributed forms
 
 - **Claude Code plugin** — `.claude-plugin/plugin.json` prompts for config via
-  `userConfig` and downloads the release binary into the plugin data dir.
-  Release checksums are required; `YTDL_MCP_ALLOW_MISSING_CHECKSUM=1` is only
-  for compatibility testing with older/manual releases that lack `.sha256`
-  files.
+  `userConfig`; `scripts/run-server.sh` uses an installed `ytdl-mcp` from PATH.
+  The plugin does not download or install binaries.
 - **Gemini CLI extension** — `gemini-extension.json`; install with
   `gemini extensions install https://github.com/jmagar/ytdl-mcp` (needs the
   binary on `PATH`).

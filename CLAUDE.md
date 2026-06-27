@@ -113,8 +113,8 @@ invoke the real rustup cargo directly: `~/.cargo/bin/cargo xwin build …`.
   builds linux + windows-msvc and attaches to `v*` releases; `ci.yml` runs
   fmt/clippy/test + a Windows cross-build smoke per push/PR.
 - **Claude Code plugin**: root `.claude-plugin/`, `.mcp.json`, `hooks/`,
-  `scripts/` (`fetch-binary.sh` downloads the release binary into
-  `CLAUDE_PLUGIN_DATA`; `run-server.sh` execs it). Registered in the
+  `scripts/` (`run-server.sh` uses an installed `ytdl-mcp` from PATH; plugin
+  hooks do not download or install binaries). Registered in the
   `jmagar/lab` marketplace as `ytdl-mcp`.
 - **Gemini extension**: `gemini-extension.json` (settings → `YTDLP_*` env vars).
 - **MCP bundle**: `mcpb/manifest.json` (`server.type: "binary"`, manifest schema
