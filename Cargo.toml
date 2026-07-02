@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 # MCP server (stdio transport)
-rmcp = { version = "1.7", default-features = false, features = [
+rmcp = { version = "2.0", default-features = false, features = [
   "server",
   "macros",
   "transport-io",
