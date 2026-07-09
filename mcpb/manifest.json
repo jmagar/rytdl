@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "ytdl-rmcp",
   "display_name": "yt-dlp Downloader",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Download audio/video from any yt-dlp-supported site, tag it, and transfer it to an SSH remote with rsync or scp.",
   "long_description": "Cross-platform single-binary MCP server. Downloads media with yt-dlp, embeds metadata and cover art, organizes by artist, and rsync/scp's the result to an SSH remote. yt-dlp and ffmpeg are auto-downloaded into a per-user cache on first run, so the bundle only ships the ytdl-rmcp binary itself.",
   "author": {
