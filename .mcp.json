@@ -1,7 +1,8 @@
 {
   "mcpServers": {
     "ytdl-mcp": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/run-server.sh",
+      "command": "npx",
+      "args": ["-y", "ytdl-mcp"],
       "env": {
         "YTDLP_REMOTE": "${user_config.remote}",
         "YTDLP_REMOTE_PATH": "${user_config.audio_dest_path}",
