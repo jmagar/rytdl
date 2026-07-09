@@ -1,13 +1,15 @@
 name: release
 
-# Build the cross-platform binaries and attach them to a GitHub Release.
-# A push to main cuts a unique release automatically; tag pushes keep the
-# stable-version release path available.
+# Build cross-platform binaries, attach them to a release-please GitHub Release,
+# and publish the npm launcher package for stable v* releases.
 on:
-  push:
-    branches: ["main"]
-    tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Existing release tag to attach assets to, e.g. v0.7.0"
+        required: true
 
 permissions:
   contents: write
@@ -28,18 +30,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            tag="${GITHUB_REF_NAME}"
-            release_name="ytdl-mcp ${tag}"
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            tag="${{ github.event.release.tag_name }}"
+            release_name="${{ github.event.release.name }}"
           else
-            version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)"
-            if [[ -z "$version" ]]; then
-              echo "::error::could not read package version from Cargo.toml"
+            tag="${{ inputs.tag_name }}"
+            if [[ -z "$tag" ]]; then
+              echo "::error::tag_name is required for manual releases"
               exit 1
             fi
-            short_sha="$(git rev-parse --short=12 HEAD)"
-            tag="v${version}-main.${GITHUB_RUN_NUMBER}.${short_sha}"
-            release_name="ytdl-mcp ${version} (${short_sha})"
+            release_name="ytdl-mcp ${tag}"
           fi
           echo "tag_name=${tag}" >> "$GITHUB_OUTPUT"
           echo "release_name=${release_name}" >> "$GITHUB_OUTPUT"
@@ -70,10 +70,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             artifact: ytdl-mcp-linux-x86_64
+            archive: ytdl-mcp-x86_64.tar.gz
             ext: ""
           - target: x86_64-pc-windows-msvc
             os: ubuntu-latest
             artifact: ytdl-mcp-windows-x86_64.exe
+            archive: ytdl-mcp-windows-x86_64.tar.gz
             ext: ".exe"
     runs-on: ${{ matrix.os }}
     steps:
@@ -110,6 +112,10 @@ jobs:
         run: |
           cp "target/${{ matrix.target }}/release/ytdl-mcp${{ matrix.ext }}" "${{ matrix.artifact }}"
           sha256sum "${{ matrix.artifact }}" > "${{ matrix.artifact }}.sha256"
+          mkdir -p archive
+          cp "${{ matrix.artifact }}" "archive/ytdl-mcp${{ matrix.ext }}"
+          tar -C archive -czf "${{ matrix.archive }}" "ytdl-mcp${{ matrix.ext }}"
+          sha256sum "${{ matrix.archive }}" > "${{ matrix.archive }}.sha256"
 
       # Generate a keyless GitHub build-provenance attestation for the binary so
       # consumers can verify it was built by this workflow (cd-h2). No secrets:
@@ -126,6 +132,8 @@ jobs:
           path: |
             ${{ matrix.artifact }}
             ${{ matrix.artifact }}.sha256
+            ${{ matrix.archive }}
+            ${{ matrix.archive }}.sha256
 
   mcpb:
     # Bundle the linux + windows binaries into a single .mcpb (MCP bundle) for
@@ -181,6 +189,56 @@ jobs:
           name: ${{ needs.release-meta.outputs.release_name }}
           target_commitish: ${{ github.sha }}
           files: dist/release-assets/*
+
+  npm:
+    needs: [release-meta, publish-release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: Verify npm package version matches release tag
+        id: npm-version
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.release-meta.outputs.tag_name }}"
+          version="$(node -p "require('./packages/ytdl-mcp/package.json').version")"
+          if [[ "$tag" != "v${version}" ]]; then
+            echo "::error::release tag ${tag} does not match packages/ytdl-mcp/package.json version ${version}"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Test npm launcher
+        run: npm test --prefix packages/ytdl-mcp
+      - name: Check npm launcher syntax
+        run: npm run check --prefix packages/ytdl-mcp
+      - name: Dry-run npm package
+        run: npm pack --dry-run --json ./packages/ytdl-mcp
+
+      - name: Check whether npm version is already published
+        id: published
+        shell: bash
+        run: |
+          set -euo pipefail
+          if npm view "ytdl-mcp@${{ steps.npm-version.outputs.version }}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish npm package
+        if: steps.published.outputs.exists == 'false'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --provenance --access public ./packages/ytdl-mcp
 
   test:
     runs-on: ubuntu-latest

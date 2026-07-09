@@ -17,6 +17,7 @@
 .worktrees/
 *.part
 *.ytdl
+packages/ytdl-mcp/vendor/
 
 # Built MCP bundle (produced by scripts/build-mcpb.sh)
 *.mcpb

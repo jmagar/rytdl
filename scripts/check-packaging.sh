@@ -160,10 +160,14 @@ log "MCP bundle legacy alias ok"
 
 release_workflow=".github/workflows/release.yml"
 [ -f "$release_workflow" ] || fail "missing $release_workflow"
-grep -q 'branches: \["main"\]' "$release_workflow" \
-  || fail "release workflow must run on pushes to main"
-grep -q 'GITHUB_RUN_NUMBER' "$release_workflow" \
-  || fail "main release tags must be unique per workflow run"
+grep -q 'types: \[published\]' "$release_workflow" \
+  || fail "release workflow must run when release-please publishes a GitHub Release"
+grep -q 'ytdl-mcp-x86_64.tar.gz' "$release_workflow" \
+  || fail "release workflow must publish the linux npm installer tarball"
+grep -q 'ytdl-mcp-windows-x86_64.tar.gz' "$release_workflow" \
+  || fail "release workflow must publish the windows npm installer tarball"
+grep -q 'npm publish --provenance --access public ./packages/ytdl-mcp' "$release_workflow" \
+  || fail "release workflow must publish the npm launcher with provenance"
 release_tag_expression="$(printf '%s%s' '$' '{{ needs.release-meta.outputs.tag_name }}')"
 grep -Fq "tag_name: $release_tag_expression" "$release_workflow" \
   || fail "release uploads must use the computed release tag"

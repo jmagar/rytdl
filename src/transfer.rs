@@ -191,6 +191,7 @@ impl TransferTarget {
 }
 
 /// Ensure the destination directory tree exists on the remote (idempotent).
+#[cfg_attr(windows, allow(dead_code))]
 pub async fn ensure_remote_dir(
     remote: &RemoteSpec,
     dest_path: &RemotePath,
@@ -225,6 +226,20 @@ pub async fn transfer(
     } else {
         scp(staging_kind_dir, remote, dest_path, ssh_opts).await
     }
+}
+
+#[cfg(windows)]
+pub async fn transfer_file_paths(
+    files: &[std::path::PathBuf],
+    staging_kind_dir: &Path,
+    remote: &RemoteSpec,
+    dest_path: &RemotePath,
+    ssh_opts: &[String],
+) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    transfer(staging_kind_dir, remote, dest_path, ssh_opts).await
 }
 
 async fn rsync(
@@ -289,6 +304,7 @@ async fn scp(
 }
 
 /// Minimal single-quote shell escaping for the remote path (survives spaces).
+#[cfg_attr(windows, allow(dead_code))]
 fn remote_mkdir_command(dest_path: &RemotePath) -> String {
     format!("mkdir -p -- {}", shell_quote(dest_path.as_str()))
 }

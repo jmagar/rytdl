@@ -25,7 +25,10 @@
     ".": {
       "package-name": "ytdl-mcp",
       "component": "ytdl-mcp",
-      "changelog-path": "CHANGELOG.md"
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        "packages/ytdl-mcp/package.json"
+      ]
     }
   }
 }

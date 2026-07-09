@@ -142,8 +142,12 @@ pub async fn run_download(
         )
         .await;
         match r.error.as_deref() {
-            None => tracing::info!(service = "ytdl-mcp", action = "fetch", url = %url, file_count = r.files.len(), "fetch complete"),
-            Some(e) => tracing::warn!(service = "ytdl-mcp", action = "fetch", url = %url, error = %e, "fetch error"),
+            None => {
+                tracing::info!(service = "ytdl-mcp", action = "fetch", url = %url, file_count = r.files.len(), "fetch complete")
+            }
+            Some(e) => {
+                tracing::warn!(service = "ytdl-mcp", action = "fetch", url = %url, error = %e, "fetch error")
+            }
         }
         results.push(r);
     }
@@ -402,7 +406,9 @@ pub async fn run_probe(cfg: &Arc<Config>, cache: &ToolsCache, input: ProbeInput)
                 duration_s = result.duration.unwrap_or(0.0),
                 "probe url success"
             ),
-            Some(e) => tracing::warn!(service = "ytdl-mcp", action = "probe", url = %url, error = %e, "probe url error"),
+            Some(e) => {
+                tracing::warn!(service = "ytdl-mcp", action = "probe", url = %url, error = %e, "probe url error")
+            }
         }
         results.push(result);
     }

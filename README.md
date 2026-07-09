@@ -166,17 +166,32 @@ ledger append fails, the download response still succeeds and includes
 
 ## Install
 
-Download the binary for your platform from
-[Releases](https://github.com/jmagar/ytdl-mcp/releases), or build it (see below).
-Then run the guided installer:
+Run the guided installer through npm:
 
 ```bash
+npx -y ytdl-mcp setup
+```
+
+Or install the command globally:
+
+```bash
+npm i -g ytdl-mcp
 ytdl-mcp setup
 ```
 
-It fetches yt-dlp + ffmpeg, prompts for your SSH remote and audio/video
-destinations, detects which agent CLIs are present, and registers the server
-into the ones you pick.
+The npm package downloads the matching GitHub Release binary during
+`postinstall`; the installed command is the Rust binary served through a tiny
+Node launcher. You can also use the one-line installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jmagar/ytdl-mcp/main/scripts/install.sh | bash
+```
+
+Or download the binary tarball for your platform from
+[Releases](https://github.com/jmagar/ytdl-mcp/releases), or build it (see below).
+The guided setup fetches yt-dlp + ffmpeg, prompts for your SSH remote and
+audio/video destinations, detects which agent CLIs are present, and registers
+the server into the ones you pick.
 
 ### Manual registration
 
@@ -193,6 +208,9 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
 
 ### Distributed forms
 
+- **npm launcher** — `npx -y ytdl-mcp` downloads and runs the matching
+  GitHub Release binary. Run without subcommands, it serves MCP over stdio;
+  `npx -y ytdl-mcp setup` runs the guided installer.
 - **Claude Code plugin** — `.claude-plugin/plugin.json` prompts for config via
   `userConfig`; `scripts/run-server.sh` uses an installed `ytdl-mcp` from PATH.
   The plugin does not download or install binaries.
