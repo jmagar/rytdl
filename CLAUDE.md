@@ -112,11 +112,14 @@ invoke the real rustup cargo directly: `~/.cargo/bin/cargo xwin build …`.
 - **GitHub**: `jmagar/ytdl-mcp`. Release CI in `.github/workflows/release.yml`
   builds linux + windows-msvc and attaches to `v*` releases; `ci.yml` runs
   fmt/clippy/test + a Windows cross-build smoke per push/PR.
-- **Claude Code plugin**: root `.claude-plugin/`, `.mcp.json`, `hooks/`,
-  `scripts/` (`run-server.sh` uses an installed `ytdl-mcp` from PATH; plugin
-  hooks do not download or install binaries). Registered in the
-  `jmagar/lab` marketplace as `ytdl-mcp`.
-- **Gemini extension**: `gemini-extension.json` (settings → `YTDLP_*` env vars).
+- **npm launcher**: `packages/ytdl-mcp` publishes `ytdl-mcp` to npm. MCP clients
+  should launch with `npx -y ytdl-mcp`; the npm postinstall/lazy installer
+  downloads the matching GitHub Release binary.
+- **Claude Code plugin**: root `.claude-plugin/`, `.mcp.json`, `hooks/`;
+  `.mcp.json` uses `npx -y ytdl-mcp` plus plugin `userConfig` env mapping.
+  Registered in the `jmagar/lab` marketplace as `ytdl-mcp`.
+- **Gemini extension**: `gemini-extension.json` (settings → `YTDLP_*` env vars);
+  prefer the npm launcher command for MCP stdio registration.
 - **MCP bundle**: `mcpb/manifest.json` (`server.type: "binary"`, manifest schema
   `0.3`). `scripts/build-mcpb.sh` stages the linux + windows binaries into
   `server/` and runs the `@anthropic-ai/mcpb` CLI to produce `ytdl-mcp.mcpb`; the

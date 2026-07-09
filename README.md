@@ -195,16 +195,21 @@ the server into the ones you pick.
 
 ### Manual registration
 
-Run bare, the binary serves MCP over stdio. Register it yourself:
+Run without subcommands, `npx -y ytdl-mcp` serves MCP over stdio. Register it
+yourself:
 
 ```bash
 # Claude Code
-claude mcp add -s user ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music -- /path/to/ytdl-mcp
+claude mcp add -s user ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music -- npx -y ytdl-mcp
 # Codex
-codex  mcp add --env YTDLP_REMOTE=tootie --env YTDLP_REMOTE_PATH=/media/music ytdl-mcp -- /path/to/ytdl-mcp
+codex  mcp add --env YTDLP_REMOTE=tootie --env YTDLP_REMOTE_PATH=/media/music ytdl-mcp -- npx -y ytdl-mcp
 # Gemini CLI (command is positional, env last)
-gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music
+gemini mcp add -s user ytdl-mcp npx -y ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music
 ```
+
+If you already installed a standalone binary with `npm i -g ytdl-mcp`,
+`scripts/install.sh`, or a release tarball, you can use that binary path in
+place of `npx -y ytdl-mcp`.
 
 ### Distributed forms
 
@@ -212,11 +217,11 @@ gemini mcp add -s user ytdl-mcp /path/to/ytdl-mcp -e YTDLP_REMOTE=tootie -e YTDL
   GitHub Release binary. Run without subcommands, it serves MCP over stdio;
   `npx -y ytdl-mcp setup` runs the guided installer.
 - **Claude Code plugin** — `.claude-plugin/plugin.json` prompts for config via
-  `userConfig`; `scripts/run-server.sh` uses an installed `ytdl-mcp` from PATH.
-  The plugin does not download or install binaries.
+  `userConfig`; `.mcp.json` launches `npx -y ytdl-mcp`, which downloads the
+  matching GitHub Release binary through npm.
 - **Gemini CLI extension** — `gemini-extension.json`; install with
-  `gemini extensions install https://github.com/jmagar/ytdl-mcp` (needs the
-  binary on `PATH`).
+  `gemini extensions install https://github.com/jmagar/ytdl-mcp`. MCP clients
+  should prefer the npm launcher command, `npx -y ytdl-mcp`.
 - **Container image** — `ghcr.io/jmagar/ytdl-mcp:main` is published on every
   push to `main`, or build locally with `docker build -t ytdl-mcp:local .`. It
   includes `ffmpeg`, `fpcalc`, `openssh-client`, and `rsync`. See
