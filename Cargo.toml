@@ -48,7 +48,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Locate external executables (yt-dlp, ffmpeg, rsync, scp, ssh)
-which = "7"
+which = "8"
 
 # URL parsing for mix/radio cleaning
 url = "2"
