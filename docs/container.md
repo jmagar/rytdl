@@ -1,12 +1,13 @@
 # Container Runtime
 
 The container image packages `ytdl-rmcp` with the host tools needed for download,
-fingerprinting, tagging, and SSH transfer workflows:
+fingerprinting, tagging, and transfer workflows:
 
 - `ffmpeg`
 - `fpcalc` from `libchromaprint-tools`
-- `openssh-client`
-- `rsync`
+- `openssh-client` for `host:/path` targets
+- `rclone` for `remote:path` targets
+- `rsync` for resumable local/SSH transfers
 - CA certificates
 
 The server still runs MCP over stdio by default.
@@ -34,14 +35,13 @@ docker pull ghcr.io/jmagar/ytdl-rmcp:main
 
 ## Run As An MCP Server
 
-Mount SSH credentials if `youtube_download` transfers to a remote. Keep state and
-cache directories mounted so yt-dlp, ffmpeg sidecars, the ledger, and archives
-survive container restarts.
+Mount SSH credentials if `youtube_download` transfers to a `host:/path` target.
+Keep state and cache directories mounted so yt-dlp, ffmpeg sidecars, the ledger,
+and archives survive container restarts.
 
 ```bash
 docker run --rm -i \
-  -e YTDLP_REMOTE=tootie \
-  -e YTDLP_REMOTE_PATH=/mnt/user/data/media/music/yt-dlp \
+  -e YTDLP_TARGET_PATH=tootie:/mnt/user/data/media/music/yt-dlp \
   -e YTDLP_HISTORY_PATH=/home/ytdl/.local/state/ytdl-rmcp/downloads.jsonl \
   -v "$HOME/.ssh:/home/ytdl/.ssh:ro" \
   -v ytdl-rmcp-state:/home/ytdl/.local/state/ytdl-rmcp \

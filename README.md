@@ -7,8 +7,7 @@
 A cross-platform, single-binary **MCP server** that downloads media from any
 [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported site (YouTube, Vimeo, …),
 embeds metadata and cover art, organizes files by artist, and transfers the
-result to a directory on an SSH remote — over `rsync` (with an `scp` fallback for
-hosts that lack it, e.g. Windows).
+result to a local path, an SSH target, or an rclone target.
 
 Written in Rust on the [`rmcp`](https://crates.io/crates/rmcp) crate. **yt-dlp
 and ffmpeg are auto-downloaded** into a per-user cache on first run, so the host
@@ -18,8 +17,8 @@ needs neither pre-installed — the one binary is the whole install.
 
 ## Features
 
-- **Audio, video, or both** — audio-first by default, with separate remote
-  destinations for audio and video.
+- **Audio, video, or both** — audio-first by default, with separate targets for
+  audio and video.
 - **Proper tagging** — embeds title / artist / album / date and cover art, and
   organizes output as `Artist/Title [id].ext` so media servers (Plex, etc.)
   index it cleanly. A non-greedy `Artist - Title` parse recovers the artist from
@@ -32,10 +31,10 @@ needs neither pre-installed — the one binary is the whole install.
   media-host batch jobs.
 - **Self-installing** — `ytdl-rmcp setup` registers the server into Claude Code,
   Codex, and/or Gemini CLI via each tool's own `mcp add`.
-- **Robust transfers** — `rsync --protect-args` when present, `scp` otherwise;
-  non-interactive SSH (`BatchMode=yes`, `StrictHostKeyChecking=accept-new`) so a
-  TTY-less server never hangs on a prompt. On transfer failure the local staging
-  copy is kept for retry.
+- **Robust transfers** — local paths use `rsync --partial` when present, SSH
+  targets (`host:/path`) use `rsync --protect-args` with an `scp` fallback, and
+  rclone targets (`remote:path` or `rclone:remote:/path`) use `rclone copy`. On transfer failure the
+  local staging copy is kept for retry.
 - **Repeat-safe** — `use_archive` records downloaded IDs (per mode) and skips
   them on later runs; YouTube mix/radio URLs are auto-cleaned to the seed video.
 - **Stats-ready ledger** — every completed download call appends a JSONL entry
@@ -49,7 +48,7 @@ needs neither pre-installed — the one binary is the whole install.
 | --- | --- |
 | `youtube_search` | Search YouTube with yt-dlp and return result URLs without downloading. |
 | `youtube_search_ui` | Open an interactive YouTube search UI in MCP App-capable hosts. |
-| `youtube_download` | Download one or more URLs (audio/video/both) and rsync/scp them to a remote dir. |
+| `youtube_download` | Download one or more URLs (audio/video/both) and transfer them to a target path. |
 | `youtube_probe` | Read-only: resolve title/duration/uploader/format counts without downloading. |
 | `youtube_identify` | Fingerprint local audio with `fpcalc`, return AcoustID/MusicBrainz candidates, preview canonical tags, and optionally write high-confidence tags. |
 | `youtube_stats` | Summarize the download ledger: totals, file kinds, uploaders, and recent entries. |
@@ -64,9 +63,8 @@ needs neither pre-installed — the one binary is the whole install.
 | `audio_quality` | `0` | yt-dlp quality for lossy codecs: `0`–`9` or a bitrate like `192K`. |
 | `max_height` | best | Cap video resolution (e.g. `1080`). |
 | `container` | `mp4` | `mp4` or `mkv` for video. |
-| `remote` | env `YTDLP_REMOTE` | SSH alias or `user@host`. |
-| `dest_path` | env `YTDLP_REMOTE_PATH` | Absolute remote dir for audio. |
-| `video_dest_path` | env `YTDLP_VIDEO_REMOTE_PATH` → `dest_path` | Absolute remote dir for video. |
+| `target_path` | env `YTDLP_TARGET_PATH` | Destination for audio. Use `/path` for local, `host:/path` for SSH, or `remote:path` or `rclone:remote:/path` for rclone. |
+| `video_target_path` | env `YTDLP_VIDEO_TARGET_PATH` → `target_path` | Destination for video when it should land somewhere different from audio. Same target forms. |
 | `keep_local` | `false` | Keep the local staging copy after transfer. |
 | `use_archive` | `false` | Record + skip already-downloaded IDs (per mode). |
 | `plex_playlist` | env `YTDLP_PLEX_PLAYLIST` → `yt-dlp Downloads` when Plex is configured | Plex playlist title or ID to add downloaded audio tracks to. Requires `YTDLP_PLEX_URL` and `YTDLP_PLEX_TOKEN`. |
@@ -95,9 +93,9 @@ batch:
 
 | Field | Meaning |
 | --- | --- |
-| `transferred` | `true` if every produced subtree reached the remote. |
+| `transferred` | `true` if every produced subtree reached its target. |
 | `transfer_error` | `null` on success, else the failure/timeout message (string). |
-| `remote` / `dest_path` / `destination` / `destinations` | The remote and the per-kind destination(s) actually used. |
+| `target_path` / `destination` / `destinations` | The per-kind target destination(s) actually used. |
 | `staging_kept_at` | Local staging path retained for retry (set when the transfer failed or `keep_local` was requested). |
 | `total_files` / `total_bytes` / `total_size` | Aggregate counts across all items. |
 | `partial_items` | Count of items that errored **but** still produced files. |
@@ -193,9 +191,9 @@ curl -fsSL https://raw.githubusercontent.com/jmagar/ytdl-rmcp/main/scripts/insta
 
 Or download the binary tarball for your platform from
 [Releases](https://github.com/jmagar/ytdl-rmcp/releases), or build it (see below).
-The guided setup fetches yt-dlp + ffmpeg, prompts for your SSH remote and
-audio/video destinations, detects which agent CLIs are present, and registers
-the server into the ones you pick.
+The guided setup fetches yt-dlp + ffmpeg, prompts for your audio/video target
+paths, detects which agent CLIs are present, and registers the server into the
+ones you pick.
 
 ### Manual registration
 
@@ -204,16 +202,45 @@ yourself:
 
 ```bash
 # Claude Code
-claude mcp add -s user ytdl-rmcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music -- npx -y ytdl-rmcp
+claude mcp add -s user ytdl-rmcp -e YTDLP_TARGET_PATH=tootie:/media/music -e YTDLP_EXTRACTOR_ARGS=youtube:player_client=android -- npx -y ytdl-rmcp
 # Codex
-codex  mcp add --env YTDLP_REMOTE=tootie --env YTDLP_REMOTE_PATH=/media/music ytdl-rmcp -- npx -y ytdl-rmcp
+codex  mcp add --env YTDLP_TARGET_PATH=tootie:/media/music --env YTDLP_EXTRACTOR_ARGS=youtube:player_client=android ytdl-rmcp -- npx -y ytdl-rmcp
 # Gemini CLI (command is positional, env last)
-gemini mcp add -s user ytdl-rmcp npx -y ytdl-rmcp -e YTDLP_REMOTE=tootie -e YTDLP_REMOTE_PATH=/media/music
+gemini mcp add -s user ytdl-rmcp npx -y ytdl-rmcp -e YTDLP_TARGET_PATH=tootie:/media/music -e YTDLP_EXTRACTOR_ARGS=youtube:player_client=android
 ```
 
 If you already installed a standalone binary with `npm i -g ytdl-rmcp`,
 `scripts/install.sh`, or a release tarball, you can use that binary path in
 place of `npx -y ytdl-rmcp`.
+
+For raw MCP JSON configs, include the required target path env var and the
+YouTube extractor override:
+
+```json
+{
+  "mcpServers": {
+    "ytdl-rmcp": {
+      "command": "npx",
+      "args": ["-y", "ytdl-rmcp"],
+      "env": {
+        "YTDLP_TARGET_PATH": "tootie:/mnt/user/data/media/music/yt-dlp",
+        "YTDLP_VIDEO_TARGET_PATH": "tootie:/mnt/user/data/media/movies/yt-dlp",
+        "YTDLP_AUTO_UPDATE": "1",
+        "YTDLP_MAX_AGE_DAYS": "1",
+        "YTDLP_EXTRACTOR_ARGS": "youtube:player_client=android"
+      }
+    }
+  }
+}
+```
+
+The checked-in `.mcp.json` is also a complete raw MCP profile: it declares the
+same `user_config` keys used by the plugin/bundle manifests, supplies defaults
+for local gateway imports, and maps every setting into the server environment.
+For reliable YouTube search/probe behavior it defaults
+`YTDLP_EXTRACTOR_ARGS` to `youtube:player_client=android`; official music-video
+results frequently reject yt-dlp's default YouTube clients during metadata
+extraction.
 
 ### Distributed forms
 
@@ -229,52 +256,73 @@ place of `npx -y ytdl-rmcp`.
   should prefer the npm launcher command, `npx -y ytdl-rmcp`.
 - **Container image** — `ghcr.io/jmagar/ytdl-rmcp:main` is published on every
   push to `main`, or build locally with `docker build -t ytdl-rmcp:local .`. It
-  includes `ffmpeg`, `fpcalc`, `openssh-client`, and `rsync`. See
+  includes `ffmpeg`, `fpcalc`, `openssh-client`, `rclone`, and `rsync`. See
   [`docs/container.md`](docs/container.md) for MCP and mounted-library examples.
 - **MCP bundle (`.mcpb` / `.dxt`)** — `mcpb/manifest.json` defines a
   `binary`-type bundle for one-click install in MCPB-capable desktop hosts.
   Every main release publishes `ytdl-rmcp.mcpb` plus a legacy `ytdl-rmcp.dxt`
   alias; both contain the same linux + windows binaries. The bundle defaults
   optional config values to empty strings so Claude Desktop can install it
-  before you fill in the SSH destination settings. Configure at least the
-  remote and audio destination in the extension settings before downloading.
+  before you fill in the destination settings. Configure at least the target
+  path in the extension settings before downloading.
   Build one locally from prebuilt binaries with `scripts/build-mcpb.sh` (needs
   Node for the `@anthropic-ai/mcpb` CLI).
 
 ## Configuration (environment variables)
 
-| Var | Default | Meaning |
-| --- | --- | --- |
-| `YTDLP_REMOTE` | — | SSH remote (alias or `user@host`) for transfers. |
-| `YTDLP_REMOTE_PATH` | — | Absolute remote dir for **audio**. |
-| `YTDLP_VIDEO_REMOTE_PATH` | falls back to audio | Absolute remote dir for **video**. |
-| `YTDLP_AUDIO_FORMAT` | `mp3` | Default audio codec. |
-| `YTDLP_STAGING_DIR` | system temp | Local staging base dir. |
-| `YTDLP_SSH_OPTS` | — | Extra ssh options parsed with shell-word syntax; appended after the forced `BatchMode`/`StrictHostKeyChecking` flags. Example: `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is rejected. |
-| `YTDLP_ARCHIVE_DIR` | per-user state dir | Where `use_archive` history lives. |
-| `YTDLP_HISTORY_PATH` | per-user state dir `downloads.jsonl` | JSONL download ledger used by `youtube_stats`. |
-| `YTDLP_PLEX_URL` | — | Plex server URL, e.g. `http://plex.local:32400`, used when adding audio downloads to a Plex playlist. |
-| `YTDLP_PLEX_TOKEN` | — | Plex auth token for playlist/search API calls. |
-| `YTDLP_PLEX_PLAYLIST` | `yt-dlp Downloads` when Plex URL/token are set | Default Plex playlist title or ID for `youtube_download`; can be overridden with the `plex_playlist` parameter. |
-| `YTDLP_CLEAN_METADATA` | `1` | Strip common YouTube title noise before embedding metadata. Set to `0` to preserve source titles exactly. |
-| `YTDLP_ACOUSTID_CLIENT_KEY` | — | AcoustID application API key required by `youtube_identify`; when set, `youtube_download` automatically writes high-confidence MusicBrainz tags to downloaded audio before transfer. |
-| `FPCALC_PATH` | `fpcalc` on `PATH` | Optional explicit path to the Chromaprint `fpcalc` executable. |
-| `YTDLP_MUSICBRAINZ_CONTACT` | GitHub repo URL | Contact URL/email included in lookup User-Agent strings. |
-| `YTDLP_AUTO_UPDATE` | `1` | Re-download yt-dlp when stale. |
-| `YTDLP_MAX_AGE_DAYS` | `14` | Staleness threshold (days). |
-| `YTDLP_UPDATE_PRE` | `0` | Track yt-dlp's nightly channel. |
-| `YTDLP_EXTRACTOR_ARGS` | — | Passed to yt-dlp `--extractor-args`, e.g. `youtube:player_client=android` for videos the default clients can't reach. |
-| `YTDLP_TIMEOUT_SECS` | `1800` | Timeout for each yt-dlp probe/download command. |
-| `YTDLP_TRANSFER_TIMEOUT_SECS` | `600` | Timeout for each transfer phase. |
-| `YTDLP_SHA256` / `FFMPEG_SHA256` | — | Optional SHA-256 digest required for the resolved yt-dlp / ffmpeg executable. |
-| `YTDLP_PATH` / `FFMPEG_PATH` | — | Use a specific yt-dlp / ffmpeg instead of auto-download. |
-| `YTDLP_LOG` | `info` | `tracing` filter (stderr only). |
+Only one value is required for downloads: `YTDLP_TARGET_PATH`.
+`YTDLP_VIDEO_TARGET_PATH` is required only when video files should land
+somewhere different from audio. `youtube_search`, `youtube_probe`, and
+`youtube_identify` do not need a destination. The install manifests default
+`YTDLP_EXTRACTOR_ARGS` to `youtube:player_client=android` because that client
+survives common YouTube metadata blocks that make official music-video search
+results look unavailable.
+
+Target path forms:
+
+- `/path/to/library` — local directory. Uses `rsync --partial` when available,
+  otherwise a Rust filesystem copy. Requires `YTDLP_ALLOW_LOCAL_TARGETS=true` because local paths let MCP callers choose write locations.
+- `host:/path/to/library` — SSH target. Uses the existing rsync/scp flow and
+  honors `YTDLP_SSH_OPTS`.
+- `remote:path/to/library` — rclone target with a relative remote path. Uses `rclone copy`; `rclone` must be
+  configured on `PATH` for the server process.
+- `rclone:remote:/path/to/library` — explicit rclone target for an absolute remote path; without the `rclone:` prefix, `host:/path` remains SSH by design.
+
+| Var | Required? | Default | Used by | Meaning |
+| --- | --- | --- | --- | --- |
+| `YTDLP_TARGET_PATH` | Required for downloads | — | download | Destination for **audio**. Use `/path` for local, `host:/path` for SSH, or `remote:path` or `rclone:remote:/path` for rclone. |
+| `YTDLP_VIDEO_TARGET_PATH` | Optional | falls back to `YTDLP_TARGET_PATH` | download | Destination for **video** when video files should land somewhere different from audio. Same target forms. |
+| `YTDLP_ALLOW_LOCAL_TARGETS` | Optional | `0` | download | Permit local filesystem targets such as `/path`. Keep disabled unless you trust MCP callers to choose local write locations. |
+| `YTDLP_AUDIO_FORMAT` | Optional | `mp3` | download | Default audio codec: `mp3`, `m4a`, `opus`, `flac`, `wav`, or `best`. |
+| `YTDLP_STAGING_DIR` | Optional | system temp | download | Local directory where media is staged before transfer. On transfer failure this staging copy is kept for retry. |
+| `YTDLP_SSH_OPTS` | Optional | — | download | Extra ssh options parsed with shell-word syntax and appended after forced non-interactive defaults. Example: `-i "~/.ssh/ytdl key" -o ProxyJump=media-bastion`. Malformed quoting is rejected, and command-execution footguns such as `ProxyCommand` are stripped. |
+| `YTDLP_ARCHIVE_DIR` | Optional | per-user state dir | download | Directory that stores `use_archive` download archives. Separate per-mode archive files are created inside it. |
+| `YTDLP_HISTORY_PATH` | Optional | per-user state dir `downloads.jsonl` | download, stats | JSONL download ledger used by `youtube_stats`. |
+| `YTDLP_PLEX_URL` | Required for Plex sync | — | download | Plex server URL, e.g. `http://plex.local:32400`, used when adding audio downloads to a Plex playlist. Must be paired with `YTDLP_PLEX_TOKEN`. |
+| `YTDLP_PLEX_TOKEN` | Required for Plex sync | — | download | Plex auth token for playlist/search API calls. Must be paired with `YTDLP_PLEX_URL`. |
+| `YTDLP_PLEX_PLAYLIST` | Optional | `yt-dlp Downloads` when Plex URL/token are set | download | Default Plex playlist title or ID; can be overridden per call with `plex_playlist`. |
+| `YTDLP_CLEAN_METADATA` | Optional | `1` | download | Strip common YouTube title noise before embedding metadata. Set to `0` to preserve source titles exactly. |
+| `YTDLP_ACOUSTID_CLIENT_KEY` | Required for identify/auto-retagging | — | identify, download | AcoustID application API key. Required by `youtube_identify`; when set, `youtube_download` also writes high-confidence MusicBrainz tags to downloaded audio before transfer. |
+| `FPCALC_PATH` | Optional | `fpcalc` on `PATH` | identify, download retagging | Optional explicit path to the Chromaprint `fpcalc` executable. |
+| `YTDLP_MUSICBRAINZ_CONTACT` | Optional | GitHub repo URL | identify, download retagging | Contact URL/email included in MusicBrainz lookup User-Agent strings. |
+| `YTDLP_AUTO_UPDATE` | Optional | `1` | tool bootstrap | Re-download yt-dlp when stale. Disable only when `YTDLP_PATH`/hash pins are managing the executable externally. |
+| `YTDLP_MAX_AGE_DAYS` | Optional | `14` | tool bootstrap | Staleness threshold in days for yt-dlp auto-update. The local `.mcp.json` uses `1` so gateway relaunches pick up extractor fixes quickly. |
+| `YTDLP_UPDATE_PRE` | Optional | `0` | tool bootstrap | Track yt-dlp's nightly pre-release channel instead of stable. |
+| `YTDLP_EXTRACTOR_ARGS` | Required for reliable YouTube search/probe | `youtube:player_client=android` in install manifests; unset in bare process env | search, probe, download | Passed to yt-dlp `--extractor-args`. The Android YouTube client fixes common `This video is not available` metadata failures for official music videos. |
+| `YTDLP_TIMEOUT_SECS` | Optional | `1800` | search, probe, download | Timeout for each yt-dlp search/probe/download command. |
+| `YTDLP_TRANSFER_TIMEOUT_SECS` | Optional | `600` | download | Timeout for each transfer phase. |
+| `YTDLP_PATH` | Optional | — | tool bootstrap | Use a specific yt-dlp executable instead of auto-resolution/auto-download. |
+| `FFMPEG_PATH` | Optional | — | tool bootstrap, download | Use a specific ffmpeg executable instead of auto-resolution/auto-download. Probe/search do not need ffmpeg. |
+| `YTDLP_SHA256` | Optional | — | tool bootstrap | Optional SHA-256 digest required for the resolved yt-dlp executable. |
+| `FFMPEG_SHA256` | Optional | — | tool bootstrap | Optional SHA-256 digest required for the resolved ffmpeg executable. |
+| `YTDLP_LOG` | Optional | `info` | server process | `tracing` filter written to stderr only. Never send logs to stdout because stdout is the MCP JSON-RPC channel. |
 
 > **Maintainers:** this table is maintained **by hand**. `scripts/check-packaging.sh`
-> only cross-checks the four machine-readable config surfaces (the Claude plugin
-> `.mcp.json` / `userConfig`, `gemini-extension.json`, and `mcpb/manifest.json`);
-> it does **not** read this README. When you add, rename, or remove a `YTDLP_*`
-> env var, update this table manually — nothing in CI will catch the drift.
+> cross-checks the machine-readable config surfaces (the Claude plugin,
+> `.mcp.json` `user_config`, `gemini-extension.json`, and `mcpb/manifest.json`) and verifies this README mentions every mapped env var name.
+> It does not compare README descriptions or defaults. When you add, rename, or remove a
+> `YTDLP_*`, `FFMPEG_*`, `FPCALC_PATH`, or `YTDLP_LOG` env var, update this
+> table manually.
 
 ### Bootstrap trust model
 
@@ -302,19 +350,22 @@ config** — it is not a hardened multi-tenant boundary.
   yt-dlp, and every positional is passed after a `--` end-of-options separator so
   a `-`-prefixed value can't be parsed as a flag; the trust assumption above
   still holds regardless.
-- **SSH is key-only and non-interactive.** Transfers force `BatchMode=yes` and
+- **SSH is key-only and non-interactive.** SSH targets force `BatchMode=yes` and
   `StrictHostKeyChecking=accept-new`, so a TTY-less server fails fast instead of
   prompting; there is no password auth. Auth comes from your SSH key/agent and
   any options you add via `YTDLP_SSH_OPTS`.
-- **Remote specs and paths are validated.** The `RemoteSpec` and `RemotePath`
-  newtypes reject empty values, option-like (`-`-leading) remotes, and
-  whitespace/control characters before any value reaches `ssh`/`rsync`/`scp`,
-  and remote paths are single-quote-escaped for the remote shell.
+- **Target paths are validated.** Local and SSH paths must be absolute and may
+  not contain traversal or control characters. SSH remotes also reject
+  option-like and whitespace/control-bearing values before anything reaches
+  `ssh`/`rsync`/`scp`; remote paths are single-quote-escaped for the remote
+  shell. Rclone targets must be `remote:path` or explicit `rclone:remote:/path` and reject control characters.
 
 ## Requirements
 
-- **ssh** (and optionally **rsync** — falls back to **scp**, e.g. on Windows).
-- Passwordless key-based SSH auth to the remote.
+- **rsync** is recommended for local and SSH transfers; local transfers fall
+  back to **cp**, and SSH transfers fall back to **scp**.
+- **ssh** plus passwordless key-based auth when using `host:/path` targets.
+- **rclone** plus a configured rclone remote when using `remote:path` or `rclone:remote:/path` targets.
 - yt-dlp and ffmpeg are fetched automatically (override with `YTDLP_PATH` /
   `FFMPEG_PATH`, or just have them on `PATH`).
 - `youtube_identify` additionally needs `fpcalc`; the container image includes
@@ -358,8 +409,9 @@ Bare invocation serves MCP over stdio; `setup` runs the installer. A
    source metadata sidecars, and the `Artist/Title [id]` output template.
 3. *(optional)* When `YTDLP_ACOUSTID_CLIENT_KEY` is set, fingerprints the
    downloaded audio and writes high-confidence MusicBrainz/AcoustID tags
-   in-place — before transfer, so the remote copy carries the canonical tags.
-4. Transfers each kind's subtree to its own remote dir (rsync, else scp).
+   in-place — before transfer, so the target copy carries the canonical tags.
+4. Transfers each kind's subtree to its target: local rsync/cp, SSH rsync/scp,
+   or rclone copy.
 5. *(optional)* When Plex credentials are configured and the transfer
    succeeded, adds the downloaded audio tracks to the target Plex playlist.
 6. Appends the completed call to the JSONL download ledger.
@@ -379,4 +431,3 @@ This repo follows the Rust MCP server naming convention:
 - Repo: `ytdl-rmcp`
 - CLI alias: `rytdl`
 - npm package: `ytdl-rmcp`
-

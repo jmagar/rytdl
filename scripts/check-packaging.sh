@@ -59,9 +59,11 @@ trap 'rm -rf "$tmp_dir"' EXIT
 jq -r '.userConfig | keys[]' .claude-plugin/plugin.json | sort -u > "$tmp_dir/plugin_keys"
 jq -r '.. | strings | capture("\\$\\{user_config\\.(?<key>[A-Za-z0-9_]+)\\}")? | .key' .mcp.json \
   | sort -u > "$tmp_dir/mcp_refs"
+jq -r '.user_config | keys[]' .mcp.json | sort -u > "$tmp_dir/mcp_user_config_keys"
 
 [ -s "$tmp_dir/plugin_keys" ] || fail ".claude-plugin/plugin.json has no userConfig keys"
 [ -s "$tmp_dir/mcp_refs" ] || fail ".mcp.json has no user_config references"
+[ -s "$tmp_dir/mcp_user_config_keys" ] || fail ".mcp.json has no user_config keys"
 
 missing_plugin_keys="$(comm -23 "$tmp_dir/mcp_refs" "$tmp_dir/plugin_keys")"
 if [ -n "$missing_plugin_keys" ]; then
@@ -72,9 +74,48 @@ unused_plugin_keys="$(comm -13 "$tmp_dir/mcp_refs" "$tmp_dir/plugin_keys")"
 if [ -n "$unused_plugin_keys" ]; then
   fail ".claude-plugin/plugin.json userConfig keys are not mapped in .mcp.json: ${unused_plugin_keys//$'\n'/, }"
 fi
+
+drift_mcp_user_config_keys="$(comm -3 "$tmp_dir/plugin_keys" "$tmp_dir/mcp_user_config_keys")"
+if [ -n "$drift_mcp_user_config_keys" ]; then
+  fail ".mcp.json user_config keys differ from plugin.json userConfig keys: ${drift_mcp_user_config_keys//$'\n'/, }"
+fi
+
+missing_mcp_defaults="$(jq -r '.user_config | to_entries[] | select(.value | has("default") | not) | .key' .mcp.json)"
+if [ -n "$missing_mcp_defaults" ]; then
+  fail ".mcp.json user_config keys need defaults for raw MCP imports: ${missing_mcp_defaults//$'\n'/, }"
+fi
 log "Claude userConfig mapping ok"
 
 jq -r '.mcpServers."ytdl-rmcp".env | keys[]' .mcp.json | sort -u > "$tmp_dir/mcp_env_vars"
+{
+  cat "$tmp_dir/mcp_env_vars"
+  printf '%s\n' "YTDLP_LOG"
+} | sort -u > "$tmp_dir/readme_env_vars"
+
+grep -q '| Var | Required? | Default | Used by | Meaning |' README.md \
+  || fail "README.md env table must include a Required? column"
+
+missing_readme_env="$(
+  while IFS= read -r env_var; do
+    grep -Fq "\`$env_var\`" README.md || printf '%s\n' "$env_var"
+  done < "$tmp_dir/readme_env_vars"
+)"
+if [ -n "$missing_readme_env" ]; then
+  fail "README.md is missing env var documentation: ${missing_readme_env//$'\n'/, }"
+fi
+log "README env coverage ok"
+
+cargo_version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+npm_version="$(jq -r '.version' packages/ytdl-rmcp/package.json)"
+gemini_version="$(jq -r '.version' gemini-extension.json)"
+mcpb_version="$(jq -r '.version' mcpb/manifest.json)"
+if [ "$cargo_version" != "$npm_version" ] \
+  || [ "$cargo_version" != "$gemini_version" ] \
+  || [ "$cargo_version" != "$mcpb_version" ]; then
+  fail "version drift: Cargo=$cargo_version npm=$npm_version gemini=$gemini_version mcpb=$mcpb_version"
+fi
+log "version sync ok"
+
 jq -e '
   (.settings | type == "array")
   and all(.settings[];
@@ -151,6 +192,33 @@ fi
 drift_mcpb_keys="$(comm -3 "$tmp_dir/plugin_keys" "$tmp_dir/mcpb_keys")"
 if [ -n "$drift_mcpb_keys" ]; then
   fail "mcpb/manifest.json user_config keys differ from plugin.json userConfig keys: ${drift_mcpb_keys//$'\n'/, }"
+fi
+
+mcpb_mcp_semantic_drift="$(
+  jq -r '
+    .user_config
+    | to_entries[]
+    | [
+        .key,
+        (if (.key == "max_age_days" or .key == "plex_playlist") then "__ALLOW_SURFACE_DEFAULT__" else (.value.default // "__MISSING__") end),
+        (.value.description // "__MISSING__")
+      ]
+    | @tsv
+  ' .mcp.json | sort > "$tmp_dir/mcp_semantic"
+  jq -r '
+    .user_config
+    | to_entries[]
+    | [
+        .key,
+        (if (.key == "max_age_days" or .key == "plex_playlist") then "__ALLOW_SURFACE_DEFAULT__" else (.value.default // "__MISSING__") end),
+        (.value.description // "__MISSING__")
+      ]
+    | @tsv
+  ' "$mcpb_manifest" | sort > "$tmp_dir/mcpb_semantic"
+  comm -3 "$tmp_dir/mcp_semantic" "$tmp_dir/mcpb_semantic"
+)"
+if [ -n "$mcpb_mcp_semantic_drift" ]; then
+  fail "mcpb/manifest.json and .mcp.json user_config defaults/descriptions differ"
 fi
 log "MCP bundle manifest mapping ok"
 

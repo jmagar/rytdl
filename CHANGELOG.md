@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-11
+
 ### Security
 
 - Validate tool-call URLs as `http`/`https` and pass every yt-dlp positional
@@ -16,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `YTDLP_TARGET_PATH` / `YTDLP_VIDEO_TARGET_PATH` destination model, supporting
+  local paths, SSH targets, and rclone targets from one setting.
+- Optional `YTDLP_ALLOW_LOCAL_TARGETS` guard for per-call local filesystem
+  destination overrides.
 - `ytdl-rmcp doctor` subcommand: a read-only diagnostic report (version, git SHA,
   platform, resolved tool paths, and redacted config presence) for triaging a
   broken install.
@@ -23,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Deprecated `YTDLP_REMOTE` + `YTDLP_REMOTE_PATH` and the matching per-call
+  `remote` / `dest_path` inputs in favor of target paths, while retaining
+  runtime compatibility for existing installs.
+- Download JSON/history now include `target_path` while retaining legacy SSH
+  destination fields during the transition.
 - Replace the download payload with a typed `DownloadPayload` plus a
   `DownloadStatus` enum, and the `urls` input with a validated `Urls` newtype.
 - Offload `youtube_identify` fingerprinting/lookups off the reactor so they do
@@ -72,5 +83,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   organization, YouTube mix/radio URL cleaning, and a `setup` installer that
   registers the server into Claude Code, Codex, and Gemini CLI.
 
-[Unreleased]: https://github.com/jmagar/ytdl-rmcp/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jmagar/ytdl-rmcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jmagar/ytdl-rmcp/compare/v0.7.0...v1.0.0
 [0.7.0]: https://github.com/jmagar/ytdl-rmcp/releases/tag/v0.7.0

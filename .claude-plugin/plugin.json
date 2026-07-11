@@ -1,6 +1,6 @@
 {
   "name": "ytdl-rmcp",
-  "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to an SSH remote with rsync or scp.",
+  "description": "Download audio/video with yt-dlp (Rust binary), embed metadata + cover art, organize by artist, and transfer to local, SSH, or rclone targets.",
   "author": {
     "name": "Jacob Magar"
   },
@@ -14,22 +14,16 @@
     "rsync"
   ],
   "userConfig": {
-    "remote": {
+    "target_path": {
       "type": "string",
-      "title": "SSH remote",
-      "description": "SSH alias (~/.ssh/config) or user@host to transfer downloads to. Passwordless key auth required.",
+      "title": "Target path",
+      "description": "Destination for audio downloads. Use /path for local, host:/path or ssh:host:/path for SSH, and remote:path or rclone:remote:path for rclone.",
       "required": true
     },
-    "audio_dest_path": {
+    "video_target_path": {
       "type": "string",
-      "title": "Audio destination",
-      "description": "Absolute remote directory for audio downloads, e.g. /mnt/user/data/media/music/yt-dlp",
-      "required": true
-    },
-    "video_dest_path": {
-      "type": "string",
-      "title": "Video destination",
-      "description": "Absolute remote directory for video downloads, e.g. /mnt/user/data/media/movies/yt-dlp. Falls back to the audio destination if blank.",
+      "title": "Video target path",
+      "description": "Destination for video downloads. Same forms as target path. Falls back to the target path if blank.",
       "required": false
     },
     "audio_format": {
@@ -110,7 +104,7 @@
     "auto_update": {
       "type": "boolean",
       "title": "Auto-update yt-dlp",
-      "description": "Update yt-dlp at server startup when stale. Recommended on \u2014 each session relaunch self-heals against extractor breakage.",
+      "description": "Update yt-dlp at server startup when stale. Recommended on — each session relaunch self-heals against extractor breakage.",
       "default": true
     },
     "max_age_days": {
@@ -130,7 +124,8 @@
     "extractor_args": {
       "type": "string",
       "title": "yt-dlp extractor args",
-      "description": "Passed to yt-dlp's --extractor-args, e.g. 'youtube:player_client=android' for videos the default clients can't reach. Optional.",
+      "description": "Passed to yt-dlp's --extractor-args. The Android YouTube client keeps search/probe working for official music videos that reject yt-dlp's default clients.",
+      "default": "youtube:player_client=android",
       "required": false
     },
     "ytdlp_path": {
@@ -169,6 +164,13 @@
       "type": "string",
       "title": "ffmpeg SHA-256 pin",
       "description": "Optional SHA-256 digest required for the resolved ffmpeg executable.",
+      "required": false
+    },
+    "allow_local_targets": {
+      "type": "boolean",
+      "title": "Allow local targets",
+      "description": "Permit /path local filesystem destinations. Keep disabled unless you trust MCP callers to choose local write locations.",
+      "default": false,
       "required": false
     }
   }

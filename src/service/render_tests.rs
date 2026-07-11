@@ -28,7 +28,7 @@ fn download_payload_marks_files_with_error_as_partial() {
         ..Default::default()
     }];
 
-    let payload = download_payload(&results, "media", &[("video", "/video")], true, None, None);
+    let payload = download_payload(&results, &[("video", "media:/video")], true, None, None);
 
     let item = &payload["items"][0];
     assert_eq!(item["status"], "partial");

@@ -1,5 +1,5 @@
 //! High-level orchestration for the MCP tools: resolve the external tools,
-//! download/probe/search via yt-dlp, transfer to the SSH remote, and format the
+//! download/probe/search via yt-dlp, transfer to the target, and format the
 //! response payloads. Config is threaded as `Arc<Config>` so the blocking hops
 //! (`spawn_blocking`) move a cheap refcount bump instead of deep-cloning all of
 //! `Config`, and resolved tool paths are memoized per-process via [`ToolsCache`].
@@ -80,22 +80,43 @@ pub async fn run_download(
     input: DownloadInput,
 ) -> Result<String> {
     let started = std::time::Instant::now();
-    let remote = input.remote.clone().or_else(|| cfg.remote.clone());
-    let audio_dest = input.dest_path.clone().or_else(|| cfg.dest_path.clone());
-    let video_dest = input
-        .video_dest_path
+    let legacy_target_path = input
+        .remote
+        .as_ref()
+        .zip(input.dest_path.as_ref())
+        .map(|(remote, path)| format!("{remote}:{path}"));
+    let target_path = input
+        .target_path
         .clone()
-        .or_else(|| cfg.video_dest_path.clone())
-        .or_else(|| audio_dest.clone());
+        .or(legacy_target_path)
+        .or_else(|| cfg.target_path.clone());
+    let legacy_video_target_path = input
+        .remote
+        .as_ref()
+        .zip(input.video_dest_path.as_ref())
+        .map(|(remote, path)| format!("{remote}:{path}"));
+    let video_target_path = input
+        .video_target_path
+        .clone()
+        .or(legacy_video_target_path)
+        .or_else(|| cfg.video_target_path.clone())
+        .or_else(|| target_path.clone());
+    let per_call_target = input.target_path.is_some()
+        || input.video_target_path.is_some()
+        || input.remote.is_some()
+        || input.dest_path.is_some()
+        || input.video_dest_path.is_some();
 
-    let Some(remote) = remote else {
-        bail!("No SSH remote. Pass 'remote' or set the YTDLP_REMOTE env var.");
-    };
-    let Some(audio_dest) = audio_dest else {
-        bail!("No destination. Pass 'dest_path' or set YTDLP_REMOTE_PATH.");
+    let Some(target_path) = target_path else {
+        bail!("No target path. Pass 'target_path' or set YTDLP_TARGET_PATH.");
     };
     let target =
-        crate::transfer::TransferTarget::parse(&remote, &audio_dest, video_dest.as_deref())?;
+        crate::transfer::TransferTarget::parse_targets(&target_path, video_target_path.as_deref())?;
+    if target.contains_local() && per_call_target && !cfg.allow_local_targets {
+        bail!(
+            "Per-call local target paths are disabled. Use configured YTDLP_TARGET_PATH or set YTDLP_ALLOW_LOCAL_TARGETS=true."
+        );
+    }
 
     let tools = ensure_tools(cfg, cache).await?;
 
@@ -118,7 +139,7 @@ pub async fn run_download(
         action = "run_download",
         url_count = validated_urls.len(),
         mode = ?input.mode,
-        remote = %remote,
+        target = %target.audio_target().display(),
         "download start"
     );
     let mut results: Vec<ItemResult> = Vec::new();
@@ -159,7 +180,7 @@ pub async fn run_download(
             bail!("Nothing was downloaded: {}", errs.join("; "));
         }
         // Archive hit / genuinely empty — succeed with a no-op summary.
-        let mut payload = build_download_payload(&results, &remote, &[], true, None, None);
+        let mut payload = build_download_payload(&results, &[], true, None, None);
         record_plex_playlist(cfg, input.plex_playlist.clone(), &results, &mut payload).await;
         record_history(cfg, input.mode, &mut payload).await;
         return Ok(render_download(&payload, input.response_format));
@@ -168,16 +189,20 @@ pub async fn run_download(
     // The destination each kind actually produced files for — drives both the
     // transfer loop and the reported destination(s).
     let has_kind = |k: &str| results.iter().flat_map(|r| &r.files).any(|f| f.kind == k);
-    let mut transfer_dests: Vec<(&str, &crate::transfer::RemotePath)> = Vec::new();
+    let mut transfer_dests: Vec<(&str, &crate::transfer::TargetPath)> = Vec::new();
     if has_kind("audio") {
-        transfer_dests.push(("audio", target.audio_dest()));
+        transfer_dests.push(("audio", target.audio_target()));
     }
     if has_kind("video") {
-        transfer_dests.push(("video", target.video_dest()));
+        transfer_dests.push(("video", target.video_target()));
     }
-    let dests: Vec<(&str, &str)> = transfer_dests
+    let dest_strings: Vec<(String, String)> = transfer_dests
         .iter()
-        .map(|(kind, dest)| (*kind, dest.as_str()))
+        .map(|(kind, dest)| ((*kind).to_string(), dest.display()))
+        .collect();
+    let dests: Vec<(&str, &str)> = dest_strings
+        .iter()
+        .map(|(kind, dest)| (kind.as_str(), dest.as_str()))
         .collect();
 
     let metadata_retag = auto_retag_audio(cfg, &results).await;
@@ -195,8 +220,7 @@ pub async fn run_download(
             service = "ytdl-rmcp",
             action = "transfer",
             kind = %kind,
-            remote = %target.remote().as_str(),
-            dest = %dest.as_str(),
+            target = %dest.display(),
             "transfer start"
         );
         #[cfg(windows)]
@@ -207,22 +231,17 @@ pub async fn run_download(
             .map(|f| f.path.clone())
             .collect();
         #[cfg(windows)]
-        let transfer = crate::transfer::transfer_file_paths(
-            &kind_files,
-            &kind_dir,
-            target.remote(),
-            dest,
-            &ssh_opts,
-        );
+        let transfer =
+            crate::transfer::transfer_file_paths(&kind_files, &kind_dir, dest, &ssh_opts);
         #[cfg(not(windows))]
-        let transfer = transfer_kind(&kind_dir, target.remote(), dest, &ssh_opts);
+        let transfer = transfer_kind(&kind_dir, dest, &ssh_opts);
         match tokio::time::timeout(cfg.transfer_timeout(), transfer).await {
             Ok(Ok(())) => {
                 tracing::info!(
                     service = "ytdl-rmcp",
                     action = "transfer",
                     kind = %kind,
-                    dest = %dest.as_str(),
+                    target = %dest.display(),
                     "transfer success"
                 );
             }
@@ -267,7 +286,6 @@ pub async fn run_download(
 
     let mut payload = build_download_payload(
         &results,
-        target.remote().as_str(),
         &dests,
         transferred,
         transfer_error.clone(),
@@ -293,12 +311,11 @@ pub async fn run_download(
 #[cfg(not(windows))]
 async fn transfer_kind(
     dir: &Path,
-    remote: &crate::transfer::RemoteSpec,
-    dest: &crate::transfer::RemotePath,
+    target: &crate::transfer::TargetPath,
     ssh_opts: &[String],
 ) -> Result<()> {
-    crate::transfer::ensure_remote_dir(remote, dest, ssh_opts).await?;
-    crate::transfer::transfer(dir, remote, dest, ssh_opts).await
+    crate::transfer::ensure_target_dir(target, ssh_opts).await?;
+    crate::transfer::transfer_to_target(dir, target, ssh_opts).await
 }
 
 /// BP-H2: prepare the archive + staging directories off the reactor. Both

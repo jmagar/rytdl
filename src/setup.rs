@@ -1,7 +1,7 @@
 //! `ytdl-rmcp setup` — interactive installer.
 //!
 //! 1. Ensure yt-dlp + ffmpeg are installed (into the cache dir).
-//! 2. Prompt for the SSH remote + audio/video destinations.
+//! 2. Prompt for audio/video target destinations.
 //! 3. Detect which agent CLIs (claude/codex/gemini) are present.
 //! 4. Register this binary into the selected ones via their `mcp add` commands
 //!    (rather than hand-editing any JSON/TOML config).
@@ -15,6 +15,7 @@ use crate::bootstrap;
 use crate::config::Config;
 
 const SERVER_NAME: &str = "ytdl-rmcp";
+const DEFAULT_EXTRACTOR_ARGS: &str = "youtube:player_client=android";
 
 /// One agent CLI and how it registers a stdio MCP server.
 struct Agent {
@@ -58,14 +59,11 @@ pub async fn run() -> Result<()> {
 
     // 2. Prompt for config.
     let theme = ColorfulTheme::default();
-    let remote: String = Input::with_theme(&theme)
-        .with_prompt("SSH remote (alias or user@host)")
+    let target_path: String = Input::with_theme(&theme)
+        .with_prompt("Target path (/path, host:/path, or rclone:path)")
         .interact_text()?;
-    let audio_dest: String = Input::with_theme(&theme)
-        .with_prompt("Audio destination (absolute remote dir)")
-        .interact_text()?;
-    let video_dest: String = Input::with_theme(&theme)
-        .with_prompt("Video destination (blank = same as audio)")
+    let video_target_path: String = Input::with_theme(&theme)
+        .with_prompt("Video target path (blank = same as target path)")
         .allow_empty(true)
         .interact_text()?;
 
@@ -97,13 +95,7 @@ pub async fn run() -> Result<()> {
     // 5. Register into each selected CLI.
     let self_path = std::env::current_exe().context("resolve own path")?;
     let self_path = self_path.to_string_lossy().to_string();
-    let mut envs: Vec<(String, String)> = vec![
-        ("YTDLP_REMOTE".into(), remote),
-        ("YTDLP_REMOTE_PATH".into(), audio_dest),
-    ];
-    if !video_dest.trim().is_empty() {
-        envs.push(("YTDLP_VIDEO_REMOTE_PATH".into(), video_dest));
-    }
+    let envs = registration_envs(target_path, video_target_path);
 
     eprintln!();
     // `register` shells out via blocking `std::process::Command`; run the whole
@@ -138,6 +130,17 @@ pub async fn run() -> Result<()> {
     }
     eprintln!("\nDone. Restart each agent to pick up the new MCP server.");
     Ok(())
+}
+
+fn registration_envs(target_path: String, video_target_path: String) -> Vec<(String, String)> {
+    let mut envs: Vec<(String, String)> = vec![
+        ("YTDLP_TARGET_PATH".into(), target_path),
+        ("YTDLP_EXTRACTOR_ARGS".into(), DEFAULT_EXTRACTOR_ARGS.into()),
+    ];
+    if !video_target_path.trim().is_empty() {
+        envs.push(("YTDLP_VIDEO_TARGET_PATH".into(), video_target_path));
+    }
+    envs
 }
 
 /// Build and run the CLI's `mcp add`. Argument ordering differs per CLI because

@@ -18,7 +18,7 @@ FROM debian:bookworm-slim@sha256:96e378d7e6531ac9a15ad505478fcc2e69f371b10f5cdf8
 # build-push-action; these static defaults cover local/manual builds.
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="ytdl-rmcp" \
-      org.opencontainers.image.description="Cross-platform single-binary MCP server: downloads media with yt-dlp, embeds metadata + cover art, organizes by artist, and rsync/scp's to an SSH remote." \
+      org.opencontainers.image.description="Cross-platform single-binary MCP server: downloads media with yt-dlp, embeds metadata + cover art, organizes by artist, and transfers to local, SSH, or rclone targets." \
       org.opencontainers.image.source="https://github.com/jmagar/ytdl-rmcp" \
       org.opencontainers.image.url="https://github.com/jmagar/ytdl-rmcp" \
       org.opencontainers.image.licenses="MIT" \
@@ -30,6 +30,7 @@ RUN apt-get update \
         ffmpeg \
         libchromaprint-tools \
         openssh-client \
+        rclone \
         rsync \
     && rm -rf /var/lib/apt/lists/*
 

@@ -1,5 +1,5 @@
 //! ytdl-rmcp — a cross-platform MCP server that downloads media with yt-dlp,
-//! tags it, and rsyncs it to an SSH remote.
+//! tags it, and transfers it to a local, SSH, or rclone target.
 //!
 //! Bare invocation serves MCP over stdio. `ytdl-rmcp setup` installs the
 //! external tools and registers the server into the user's agent CLIs.
