@@ -87,11 +87,11 @@ impl YtdlServer {
 #[tool_router]
 impl YtdlServer {
     /// Download audio, video, or both from one or more URLs with yt-dlp, embed
-    /// metadata + cover art, organize by artist, and rsync the result to a
-    /// directory on an SSH remote. Audio and video go to separate destinations.
+    /// metadata + cover art, organize by artist, and transfer the result to a
+    /// target path. Audio and video can go to separate destinations.
     #[tool(
         name = "youtube_download",
-        description = "Download audio/video from a yt-dlp-supported URL, tag it, and rsync to an SSH remote."
+        description = "Download audio/video from a yt-dlp-supported URL, tag it, and transfer it to a local, SSH, or rclone target."
     )]
     async fn youtube_download(
         &self,
