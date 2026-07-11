@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="${YTDL_RMCP_REPO:-jmagar/ytdl-rmcp}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.local/bin}"
 VERSION="${YTDL_RMCP_VERSION:-latest}"
+RELEASE_BASE_URL="${YTDL_RMCP_RELEASE_BASE_URL:-}"
 BINARY_NAME="rytdl"
 
 usage() {
@@ -57,7 +58,9 @@ asset="$(target_asset)"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "${tmpdir}"' EXIT
 
-if [[ "${VERSION}" == "latest" ]]; then
+if [[ -n "${RELEASE_BASE_URL}" ]]; then
+  url="${RELEASE_BASE_URL%/}/${VERSION}/${asset}"
+elif [[ "${VERSION}" == "latest" ]]; then
   url="https://github.com/${REPO}/releases/latest/download/${asset}"
 else
   url="https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
