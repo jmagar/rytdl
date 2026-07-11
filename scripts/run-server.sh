@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# MCP server entry point for the Claude Code plugin. Ensures the ytdl-mcp
-# binary is present (a no-op after first run), then hands stdin/stdout to it
-# for the JSON-RPC transport.
+# MCP server entry point for the Claude Code plugin. Uses an already installed
+# ytdl-rmcp binary from PATH, then hands stdin/stdout to it for JSON-RPC.
 set -euo pipefail
 
-DATA="${CLAUDE_PLUGIN_DATA:?CLAUDE_PLUGIN_DATA not set}"
-HERE="$(cd "$(dirname "$0")" && pwd)"
+binary="${YTDL_RMCP_BIN:-ytdl-rmcp}"
 
-# The SessionStart hook normally pre-fetches the binary; doing it here too makes
-# the server self-sufficient. fetch-binary.sh writes only to stderr.
-"$HERE/fetch-binary.sh"
+if ! command -v "${binary}" >/dev/null 2>&1; then
+  printf 'ytdl-rmcp plugin: ytdl-rmcp is not installed or not on PATH.\n' >&2
+  printf 'Install ytdl-rmcp separately, then retry the plugin server.\n' >&2
+  exit 127
+fi
 
-exec "$DATA/bin/ytdl-mcp" serve
+exec "${binary}" serve
