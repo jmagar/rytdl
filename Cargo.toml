@@ -1,8 +1,8 @@
 [package]
 name = "ytdl-rmcp"
-version = "0.7.1"
+version = "1.0.0"
 edition = "2021"
-description = "Cross-platform MCP server that downloads media with yt-dlp, tags it, and rsyncs it to an SSH remote."
+description = "Cross-platform MCP server that downloads media with yt-dlp, tags it, and transfers it to local, SSH, or rclone targets."
 license = "MIT"
 repository = "https://github.com/jmagar/ytdl-rmcp"
 default-run = "rytdl"
