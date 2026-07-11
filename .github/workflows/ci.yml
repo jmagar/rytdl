@@ -100,10 +100,10 @@ jobs:
       - name: Smoke - binary starts and prints version
         shell: pwsh
         run: |
-          $exe = "target/release/ytdl-rmcp.exe"
+          $exe = "target/release/rytdl.exe"
           $version = & $exe --version
           if ($LASTEXITCODE -ne 0) {
-            Write-Error "ytdl-rmcp.exe --version exited with $LASTEXITCODE"
+            Write-Error "rytdl.exe --version exited with $LASTEXITCODE"
             exit 1
           }
           Write-Host "smoke ok: $version"
