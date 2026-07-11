@@ -2,9 +2,48 @@ use super::*;
 
 fn sample_envs() -> Vec<(String, String)> {
     vec![
-        ("YTDLP_REMOTE".to_string(), "nas".to_string()),
-        ("YTDLP_REMOTE_PATH".to_string(), "/music".to_string()),
+        ("YTDLP_TARGET_PATH".to_string(), "nas:/music".to_string()),
+        (
+            "YTDLP_EXTRACTOR_ARGS".to_string(),
+            "youtube:player_client=android".to_string(),
+        ),
     ]
+}
+
+#[test]
+fn registration_envs_include_required_download_and_extractor_defaults() {
+    assert_eq!(
+        registration_envs("tootie:/music".into(), "tootie:/movies".into()),
+        vec![
+            ("YTDLP_TARGET_PATH".to_string(), "tootie:/music".to_string()),
+            (
+                "YTDLP_EXTRACTOR_ARGS".to_string(),
+                "youtube:player_client=android".to_string(),
+            ),
+            (
+                "YTDLP_VIDEO_TARGET_PATH".to_string(),
+                "tootie:/movies".to_string(),
+            ),
+        ]
+    );
+}
+
+#[test]
+fn registration_envs_omit_blank_video_destination() {
+    let envs = registration_envs("tootie:/music".into(), "   ".into());
+    assert!(!envs.iter().any(|(key, _)| key == "YTDLP_VIDEO_TARGET_PATH"));
+    assert!(envs.iter().any(|(key, value)| {
+        key == "YTDLP_EXTRACTOR_ARGS" && value == "youtube:player_client=android"
+    }));
+}
+
+#[test]
+fn registration_envs_enable_local_targets_when_prompt_uses_local_path() {
+    let envs = registration_envs("/media/music".into(), "   ".into());
+
+    assert!(envs
+        .iter()
+        .any(|(key, value)| key == "YTDLP_ALLOW_LOCAL_TARGETS" && value == "true"));
 }
 
 #[test]
@@ -20,9 +59,9 @@ fn claude_places_env_flags_before_separator_and_cmd_after() {
             "user",
             "ytdl-rmcp",
             "-e",
-            "YTDLP_REMOTE=nas",
+            "YTDLP_TARGET_PATH=nas:/music",
             "-e",
-            "YTDLP_REMOTE_PATH=/music",
+            "YTDLP_EXTRACTOR_ARGS=youtube:player_client=android",
             "--",
             "/usr/bin/ytdl-rmcp",
         ]
@@ -50,9 +89,9 @@ fn codex_uses_env_flag_before_name() {
             "mcp",
             "add",
             "--env",
-            "YTDLP_REMOTE=nas",
+            "YTDLP_TARGET_PATH=nas:/music",
             "--env",
-            "YTDLP_REMOTE_PATH=/music",
+            "YTDLP_EXTRACTOR_ARGS=youtube:player_client=android",
             "ytdl-rmcp",
             "--",
             "/usr/bin/ytdl-rmcp",
@@ -84,9 +123,9 @@ fn gemini_places_env_flags_after_name_and_cmd() {
             "ytdl-rmcp",
             "/usr/bin/ytdl-rmcp",
             "-e",
-            "YTDLP_REMOTE=nas",
+            "YTDLP_TARGET_PATH=nas:/music",
             "-e",
-            "YTDLP_REMOTE_PATH=/music",
+            "YTDLP_EXTRACTOR_ARGS=youtube:player_client=android",
         ]
     );
 
