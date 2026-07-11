@@ -88,14 +88,13 @@ fn report_config() {
         }
     };
 
-    println!("  remote (YTDLP_REMOTE):         {}", presence(&cfg.remote));
     println!(
-        "  audio dest (YTDLP_REMOTE_PATH):  {}",
-        presence(&cfg.dest_path)
+        "  target path (YTDLP_TARGET_PATH):  {}",
+        presence(&cfg.target_path)
     );
     println!(
-        "  video dest (YTDLP_VIDEO_REMOTE_PATH):  {}",
-        presence(&cfg.video_dest_path)
+        "  video target (YTDLP_VIDEO_TARGET_PATH):  {}",
+        presence(&cfg.video_target_path)
     );
     println!(
         "  staging dir (YTDLP_STAGING_DIR):  {}",
