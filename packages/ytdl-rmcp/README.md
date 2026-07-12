@@ -13,6 +13,70 @@ Written in Rust on the [`rmcp`](https://crates.io/crates/rmcp) crate. **yt-dlp
 and ffmpeg are auto-downloaded** into a per-user cache on first run, so the host
 needs neither pre-installed — the one binary is the whole install.
 
+**30-second path:** `npx -y ytdl-rmcp setup` -> configure a target path ->
+call `youtube_search` or `youtube_probe`; use `youtube_download` only after the
+destination and trust boundary are clear.
+
+**Status:** production personal-media MCP server. Read-only search/probe/stats
+paths are safe; download, playlist, queue-drain, and tag-writing paths create or
+move state and are intended for trusted callers.
+
+**Not for:** a generic web-downloader SaaS, a multi-tenant media ingestion
+boundary, a replacement for yt-dlp's upstream site handling, or an arbitrary
+filesystem writer for untrusted MCP callers.
+
+## Contents
+
+- [Naming](#naming)
+- [Capabilities And Boundaries](#capabilities-and-boundaries)
+- [Install](#install)
+- [Quickstart](#quickstart)
+- [Client Configuration](#client-configuration)
+- [Runtime Surfaces](#runtime-surfaces)
+- [MCP Tool Reference](#mcp-tool-reference)
+- [CLI Reference](#cli-reference)
+- [Configuration](#configuration)
+- [Authentication](#authentication)
+- [Safety And Trust Model](#safety-and-trust-model)
+- [Architecture](#architecture)
+- [Distribution Contract](#distribution-contract)
+- [Development](#development)
+- [Verification](#verification)
+- [Deployment](#deployment)
+- [Troubleshooting](#troubleshooting)
+- [Related Servers](#related-servers)
+- [Documentation](#documentation)
+- [License](#license)
+
+## Naming
+
+| Surface | This repo |
+| --- | --- |
+| Repository | `ytdl-rmcp` |
+| npm package | `ytdl-rmcp` |
+| CLI / binary | `rytdl` |
+| MCP tools | `youtube_search`, `youtube_search_ui`, `youtube_download`, `youtube_probe`, `youtube_identify`, `youtube_stats`, `youtube_plex_playlist`, `youtube_transfer_queue` |
+| Env prefix | `YTDLP_*`, plus `FFMPEG_*`, `FPCALC_PATH`, and `YTDLP_LOG` |
+
+The repository and npm package use the `*-rmcp` family naming pattern, while the
+runtime binary is `rytdl` so local shells get a short Rust-native command.
+
+## Capabilities And Boundaries
+
+- Searches YouTube through yt-dlp without downloading media.
+- Downloads audio, video, or both into a staging tree, tags audio metadata, and
+  transfers the result to local, SSH, or rclone destinations.
+- Optionally fingerprints audio through AcoustID/MusicBrainz and syncs completed
+  audio downloads into a Plex playlist.
+- Builds Plex playlists from successful transfer history and drains server-made
+  retained-staging transfer manifests.
+- Exposes an MCP App search UI for hosts that can render embedded widgets.
+- Keeps a JSONL ledger for repeat-safe downloads and stats.
+
+| This repo owns | Upstream owns | Explicitly out of scope |
+| --- | --- | --- |
+| MCP tools, CLI setup, media staging, tagging, transfer policy, queue manifests, config validation, response shaping, plugin/package metadata. | yt-dlp extraction behavior, source-site availability, ffmpeg media conversion, Plex library indexing, SSH/rclone authentication. | Multi-tenant isolation, arbitrary local writes for untrusted callers, credential brokering, site-specific scraping guarantees, media-server replacement. |
+
 ---
 
 ## Features
@@ -42,7 +106,7 @@ needs neither pre-installed — the one binary is the whole install.
 - **Plex playlist sync** — when Plex credentials are configured, downloaded
   audio is added to `yt-dlp Downloads` by default.
 
-## Tools
+## MCP Tool Reference
 
 | Tool | Purpose |
 | --- | --- |
@@ -126,24 +190,41 @@ Optional keys are attached only when the relevant stage ran:
 
 ### `youtube_plex_playlist`
 
-Build or preview Plex audio playlists from successful ytdl-rmcp download
-history. `list_candidates` returns audio candidates only from history entries
-where `transferred` is `true`; `preview` resolves candidates against Plex
-without mutation; `apply` adds matches idempotently. Failed or retained-staging
+Build or preview Plex audio playlists from successful ytdl-rmcp download history.
+
+Actions:
+
+| Action | Meaning |
+| --- | --- |
+| `list_candidates` | Return audio candidates from history entries where `transferred` is `true`. |
+| `preview` | Resolve selected candidates against Plex without mutating Plex. |
+| `apply` | Add selected candidates to a Plex audio playlist idempotently. |
+
+Candidates are history-derived and audio-only. Failed or retained-staging
 transfers are intentionally excluded.
 
 `apply` can return `plexamp_url`, `plex_web_url`, and
-`playback_link_status`. The Plex Media Server playlist calls use the official
-PMS API. `plexamp_url` is a best-effort generated `listen.plex.tv` playback
-link, not an official Plexamp API guarantee.
+`playback_link_status`. `plexamp_url` is a best-effort generated
+`listen.plex.tv` playback link, not an official Plexamp API guarantee. The
+regular Plex playlist API calls use the official Plex Media Server API.
 
 ### `youtube_transfer_queue`
 
-List and drain server-created transfer failure manifests. Actions are `list`,
-`retry`, `retry_all`, and `prune`. Retry accepts only an opaque `manifest_id`,
-uses the original target paths recorded at failure time, and re-checks local
-target policy before transfer. `prune` removes failure manifests whose staging
-directory is gone. The queue never accepts arbitrary filesystem paths.
+List and drain server-created transfer failure manifests.
+
+Actions:
+
+| Action | Meaning |
+| --- | --- |
+| `list` | Show pending retained-staging transfer manifests. |
+| `retry` | Retry one manifest by opaque `manifest_id`. |
+| `retry_all` | Retry all pending manifests. |
+| `prune` | Remove manifests whose staging directory is gone. |
+
+The queue never accepts arbitrary filesystem paths. Retry uses the original
+target paths recorded at failure time and re-checks local target policy before
+transfer. Manifests are created by the local server when a transfer fails while
+the staging directory, manifest ID, file list, and original targets still match.
 
 ### `youtube_identify` parameters
 
@@ -172,7 +253,20 @@ recording, release, release-group, and release-type tags. It requires
 | `response_format` | `markdown` | `markdown` or `json`. |
 
 `youtube_search_ui` accepts the same input and returns the same search payload,
-plus MCP App metadata for hosts that can render the embedded UI.
+plus MCP App metadata for hosts that can render the embedded UI. Hosts without
+app rendering still receive the normal search result text and structured data.
+
+### MCP App pattern
+
+`youtube_search_ui` is the widget-backed entry point for this repo:
+
+- The tool descriptor advertises `_meta.ui.resourceUri`.
+- The server exposes `ui://ytdl-rmcp/youtube-search.html` through
+  `resources/list` and `resources/read`.
+- The resource uses `text/html;profile=mcp-app` and an explicit CSP metadata
+  block.
+- `.mcpb` / `.dxt` packaging installs the local server; UI resources are still
+  advertised through the MCP tools/resources protocol and are host-rendered.
 
 ### `youtube_stats` parameters
 
@@ -188,6 +282,24 @@ JSON stats include `total_downloads`, `total_files`, `total_bytes`,
 counted instead of failing the whole stats call. If a download succeeds but the
 ledger append fails, the download response still succeeds and includes
 `history_error` in JSON output.
+
+## CLI Reference
+
+The CLI owns process setup and diagnostics; media operations are exposed as MCP
+tools.
+
+| Command | Purpose |
+| --- | --- |
+| `rytdl` or `rytdl serve` | Serve MCP over stdio. This is the default runtime used by clients. |
+| `rytdl setup` | Fetch tool dependencies when needed and register local MCP clients. |
+| `rytdl doctor` | Print version, platform, tool-resolution, and config-presence diagnostics. |
+
+The npm launcher exposes the same binary:
+
+```bash
+npx -y ytdl-rmcp doctor
+npx -y ytdl-rmcp serve
+```
 
 ## Install
 
@@ -218,7 +330,53 @@ The guided setup fetches yt-dlp + ffmpeg, prompts for your audio/video target
 paths, detects which agent CLIs are present, and registers the server into the
 ones you pick.
 
-### Manual registration
+## Quickstart
+
+After setup, prove the read-only path first:
+
+```bash
+npx -y ytdl-rmcp doctor
+```
+
+For raw MCP clients, call a read-only tool with JSON-RPC `tools/call`:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "youtube_search",
+    "arguments": {
+      "query": "lcd soundsystem live",
+      "limit": 3,
+      "response_format": "json"
+    }
+  }
+}
+```
+
+Then probe a known URL before downloading:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "youtube_probe",
+    "arguments": {
+      "urls": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    }
+  }
+}
+```
+
+Use `youtube_download` only after `YTDLP_TARGET_PATH` or
+`YTDLP_VIDEO_TARGET_PATH` points at a destination you are comfortable letting
+trusted MCP callers write into.
+
+## Client Configuration
 
 Run without subcommands, `npx -y ytdl-rmcp` serves MCP over stdio. Register it
 yourself:
@@ -265,7 +423,18 @@ For reliable YouTube search/probe behavior it defaults
 results frequently reject yt-dlp's default YouTube clients during metadata
 extraction.
 
-### Distributed forms
+## Runtime Surfaces
+
+| Surface | Command or file | Notes |
+| --- | --- | --- |
+| stdio MCP server | `npx -y ytdl-rmcp` or `rytdl` | Default runtime for local MCP clients. |
+| CLI | `rytdl --help` | Same binary; exposes setup and diagnostics. |
+| Guided setup | `npx -y ytdl-rmcp setup` | Registers Claude Code, Codex, and Gemini CLI configs where available. |
+| MCP App | `youtube_search_ui` | Embedded search widget plus normal fallback tool output. |
+| Bundle | `mcpb/manifest.json` | Binary MCPB/DXT package for desktop hosts that support bundles. |
+| Container | `ghcr.io/jmagar/ytdl-rmcp:main` | Includes ffmpeg, fpcalc, SSH, rclone, and rsync for shared deployments. |
+
+## Distribution Contract
 
 - **npm launcher** — `npx -y ytdl-rmcp` downloads and runs the matching
   GitHub Release binary. Run without subcommands, it serves MCP over stdio;
@@ -291,7 +460,7 @@ extraction.
   Build one locally from prebuilt binaries with `scripts/build-mcpb.sh` (needs
   Node for the `@anthropic-ai/mcpb` CLI).
 
-## Configuration (environment variables)
+## Configuration
 
 Only one value is required for downloads: `YTDLP_TARGET_PATH`.
 `YTDLP_VIDEO_TARGET_PATH` is required only when video files should land
@@ -350,6 +519,20 @@ Target path forms:
 > `YTDLP_*`, `FFMPEG_*`, `FPCALC_PATH`, or `YTDLP_LOG` env var, update this
 > table manually.
 
+## Authentication
+
+The stdio server has no network listener or HTTP auth layer by default; access is
+whatever the local MCP client grants to the process it launches. External
+credentials live in operator-controlled environment variables, local config, SSH
+agents, rclone config, or Plex/AcoustID variables.
+
+MCP callers never provide Plex tokens, SSH keys, rclone credentials, hash pins,
+or downloader binary paths in tool arguments. Tool arguments carry media URLs,
+search/probe inputs, output mode choices, and destination selectors that are
+validated against the process configuration.
+
+## Safety And Trust Model
+
 ### Bootstrap trust model
 
 By default, first run resolves tools in this order: explicit env override,
@@ -397,7 +580,9 @@ config** — it is not a hardened multi-tenant boundary.
 - `youtube_identify` additionally needs `fpcalc`; the container image includes
   it via `libchromaprint-tools`.
 
-## Build from source
+## Development
+
+Build and test from source:
 
 ```bash
 cargo build --release                                          # Linux/macOS
@@ -423,7 +608,24 @@ This crate intentionally remains on Rust edition 2021 for the distributable
 single-binary/plugin build. Move to edition 2024 only after proving Linux,
 Windows MSVC cross-build, and plugin startup compatibility together.
 
-## How it works
+## Verification
+
+Use these checks before releasing README, package, or runtime changes:
+
+```bash
+python3 /home/jmagar/workspace/soma/scripts/check-readme-guide.py README.md packages/ytdl-rmcp/README.md
+npm --prefix packages/ytdl-rmcp run check
+cargo fmt --check
+cargo check
+cargo test
+scripts/check-packaging.sh
+git diff --check
+```
+
+For a live MCP smoke, register with a temporary config and call
+`youtube_search` or `youtube_probe` before running `youtube_download`.
+
+## Architecture
 
 Bare invocation serves MCP over stdio; `setup` runs the installer. A
 `youtube_download` call:
@@ -445,6 +647,63 @@ Bare invocation serves MCP over stdio; `setup` runs the installer. A
    destination(s).
 
 See `CLAUDE.md` for architecture, conventions, and gotchas.
+
+## Deployment
+
+- Local clients should use `npx -y ytdl-rmcp` or the installed `rytdl` binary
+  over stdio.
+- Shared runtime jobs can use the container image when ffmpeg, fpcalc, SSH,
+  rclone, and rsync should be present without host-level installs.
+- Host deployments should set destination, Plex, AcoustID, SSH, and rclone
+  credentials in process env or host config before exposing the MCP server to
+  callers.
+- Keep `YTDLP_ALLOW_LOCAL_TARGETS=0` unless trusted callers are allowed to write
+  to local filesystem paths selected through tool arguments.
+
+## Troubleshooting
+
+- YouTube metadata looks unavailable: set
+  `YTDLP_EXTRACTOR_ARGS=youtube:player_client=android` or use the checked-in
+  client/plugin configs, which already default it.
+- Downloads succeed but transfers fail: inspect `staging_kept_at` or the
+  `youtube_transfer_queue` list, then retry after fixing SSH, rclone, or local
+  target permissions.
+- Plex playlist updates are missing: confirm `YTDLP_PLEX_URL`,
+  `YTDLP_PLEX_TOKEN`, and that Plex can see the transferred files.
+- Tool bootstrap is too loose for your environment: pin `YTDLP_PATH` and
+  `FFMPEG_PATH` with matching SHA-256 variables, or disable yt-dlp auto-update.
+
+## Related Servers
+
+- `unifi-rmcp / rustifi` - UniFi controller REST API bridge.
+- `tailscale-rmcp / rustscale` - Tailscale API bridge for devices, users, and tailnet operations.
+- `unraid-rmcp / unrust` - Unraid GraphQL bridge for NAS and server management.
+- `apprise-rmcp` - Apprise notification fan-out bridge for many delivery backends.
+- `gotify-rmcp` - Gotify push notification bridge for sends, messages, apps, and clients.
+- `arcane-rmcp` - Arcane Docker management bridge for containers and related resources.
+- `yarr-rmcp` - Media-stack bridge for Sonarr, Radarr, Prowlarr, Plex, and related services.
+- `synapse` - Local Synapse workflow server for scout and flux actions.
+- `cortex` - Syslog and homelab log aggregation MCP server.
+- `axon` - RAG, crawl, scrape, extract, and semantic search project.
+- `lab` - Homelab control plane and Labby gateway project.
+- `lumen` - Local semantic code search MCP server.
+- `nugs` - Project/package management helper for local agent workflows.
+- `agentcast` - Agent transcript and activity publishing project.
+- `soma` - RMCP scaffold/runtime template for new provider-backed servers.
+
+## Documentation
+
+This README is the curated operator entry point. The generated or
+machine-readable source of truth lives in the package, plugin, and bundle
+manifests that `scripts/check-packaging.sh` cross-checks.
+
+| Doc | Purpose |
+| --- | --- |
+| `CLAUDE.md` | Architecture, conventions, and local agent notes. |
+| `docs/container.md` | Container runtime examples and mounted-library patterns. |
+| `docs/musicbrainz-acoustid.md` | Canonical metadata matching and retagging behavior. |
+| `.mcp.json` | Raw MCP profile and machine-readable user config defaults. |
+| `.claude-plugin/plugin.json`, `gemini-extension.json`, `mcpb/manifest.json` | Client-specific packaging metadata. |
 
 ## License
 
