@@ -1,6 +1,6 @@
 //! Transfer staged files to a configured target. SSH targets (`host:/path`)
-//! preserve the original rsync/scp behavior, local targets (`/path`) use rsync
-//! when available, and rclone targets (`remote:path`) use `rclone copy`.
+//! preserve the original rsync/scp behavior, local targets (`/path`) use an
+//! internal filesystem copy, and rclone targets (`remote:path`) use `rclone copy`.
 //!
 //! Key-based, non-interactive auth is assumed: `-o BatchMode=yes` plus
 //! `-o StrictHostKeyChecking=accept-new` guarantee we fail fast rather than
@@ -459,9 +459,15 @@ async fn local_copy(dir: &Path, dest_path: &LocalPath) -> Result<()> {
 }
 
 async fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
-    tokio::fs::create_dir_all(dest).await?;
-    let src_root = tokio::fs::canonicalize(src).await?;
-    let dest_root = tokio::fs::canonicalize(dest).await?;
+    let src = src.to_path_buf();
+    let dest = dest.to_path_buf();
+    tokio::task::spawn_blocking(move || copy_dir_contents_blocking(&src, &dest)).await?
+}
+
+fn copy_dir_contents_blocking(src: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest)?;
+    let src_root = std::fs::canonicalize(src)?;
+    let dest_root = std::fs::canonicalize(dest)?;
     if dest_root.starts_with(&src_root) {
         bail!(
             "local destination {} must not be inside source {}",
@@ -472,10 +478,10 @@ async fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
 
     let mut stack = vec![(src_root, dest_root)];
     while let Some((current_src, current_dest)) = stack.pop() {
-        tokio::fs::create_dir_all(&current_dest).await?;
-        let mut entries = tokio::fs::read_dir(&current_src).await?;
-        while let Some(entry) = entries.next_entry().await? {
-            let file_type = entry.file_type().await?;
+        std::fs::create_dir_all(&current_dest)?;
+        for entry in std::fs::read_dir(&current_src)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
             let source_path = entry.path();
             let dest_path = current_dest.join(entry.file_name());
             if file_type.is_symlink() {
@@ -486,10 +492,19 @@ async fn copy_dir_contents(src: &Path, dest: &Path) -> Result<()> {
             } else if file_type.is_dir() {
                 stack.push((source_path, dest_path));
             } else if file_type.is_file() {
-                tokio::fs::copy(&source_path, &dest_path).await?;
+                copy_file_streaming(&source_path, &dest_path)?;
             }
         }
     }
+    Ok(())
+}
+
+fn copy_file_streaming(source_path: &Path, dest_path: &Path) -> Result<()> {
+    let source = std::fs::File::open(source_path)?;
+    let len = source.metadata()?.len();
+    let mut dest = std::fs::File::create(dest_path)?;
+    let mut source = std::io::Read::take(source, len);
+    std::io::copy(&mut source, &mut dest)?;
     Ok(())
 }
 
