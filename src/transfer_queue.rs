@@ -176,7 +176,9 @@ pub(crate) async fn retry_all(cfg: &Config, keep_local: bool) -> Result<Transfer
             }
             Err(error) => {
                 result.failed += 1;
-                result.errors.push(redact_transfer_error(&error.to_string()));
+                result
+                    .errors
+                    .push(redact_transfer_error(&error.to_string()));
             }
         }
     }
@@ -190,8 +192,11 @@ pub(crate) fn queue_dir(cfg: &Config) -> PathBuf {
         .map(PathBuf::from)
         .and_then(|path| path.parent().map(Path::to_path_buf))
         .or_else(|| {
-            crate::bootstrap::project_dirs()
-                .map(|dirs| dirs.state_dir().unwrap_or_else(|| dirs.data_dir()).to_path_buf())
+            crate::bootstrap::project_dirs().map(|dirs| {
+                dirs.state_dir()
+                    .unwrap_or_else(|| dirs.data_dir())
+                    .to_path_buf()
+            })
         })
         .unwrap_or_else(|| std::env::temp_dir().join("ytdl-rmcp-state"));
     base.join("transfer-queue")
@@ -243,11 +248,15 @@ async fn retry_entry_unlocked(
         Ok(()) => {
             entry.status = "completed".to_string();
             entry.last_error = None;
-            fs::remove_file(&manifest_path)
-                .with_context(|| format!("remove transfer queue manifest {}", manifest_path.display()))?;
+            fs::remove_file(&manifest_path).with_context(|| {
+                format!("remove transfer queue manifest {}", manifest_path.display())
+            })?;
             if !keep_local {
                 fs::remove_dir_all(&staging_path).with_context(|| {
-                    format!("remove drained staging directory {}", staging_path.display())
+                    format!(
+                        "remove drained staging directory {}",
+                        staging_path.display()
+                    )
                 })?;
             }
             Ok(entry)
@@ -331,12 +340,16 @@ fn write_manifest(entry: &TransferQueueEntry) -> Result<()> {
 }
 
 fn read_manifest(path: &Path) -> Result<TransferQueueEntry> {
-    let file = File::open(path).with_context(|| format!("open transfer manifest {}", path.display()))?;
+    let file =
+        File::open(path).with_context(|| format!("open transfer manifest {}", path.display()))?;
     let mut entry: TransferQueueEntry = serde_json::from_reader(file)
         .with_context(|| format!("parse transfer manifest {}", path.display()))?;
     entry.manifest_path = path.to_path_buf();
     if entry.version != MANIFEST_VERSION {
-        bail!("unsupported transfer queue manifest version {}", entry.version);
+        bail!(
+            "unsupported transfer queue manifest version {}",
+            entry.version
+        );
     }
     Ok(entry)
 }

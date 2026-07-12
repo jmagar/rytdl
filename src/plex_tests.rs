@@ -141,8 +141,7 @@ fn preview_playlist_does_not_mutate_plex() {
     let mut plex = FakePlex::default();
     let tracks = vec![track("New Song", "Artist B")];
 
-    let result =
-        preview_audio_tracks_with_transport(&mut plex, "Downloads", &tracks).unwrap();
+    let result = preview_audio_tracks_with_transport(&mut plex, "Downloads", &tracks).unwrap();
 
     assert_eq!(result.matched, 1);
     assert_eq!(result.added, 0);

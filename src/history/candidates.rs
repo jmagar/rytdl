@@ -29,10 +29,7 @@ pub(crate) struct PlaylistCandidate {
     pub bytes: u64,
 }
 
-pub(crate) fn playlist_candidates(
-    cfg: &Config,
-    limit: usize,
-) -> Result<PlaylistCandidatesPayload> {
+pub(crate) fn playlist_candidates(cfg: &Config, limit: usize) -> Result<PlaylistCandidatesPayload> {
     let path = history_path(cfg);
     let _guard = HistoryLock::acquire(&path);
     let file = match File::open(&path) {
@@ -118,13 +115,20 @@ fn collect_item_candidates(
             video_id,
             url: url.clone(),
             timestamp: timestamp.to_string(),
-            duration: file["duration"].as_f64().or_else(|| item["duration"].as_f64()),
+            duration: file["duration"]
+                .as_f64()
+                .or_else(|| item["duration"].as_f64()),
             bytes: file["bytes"].as_u64().unwrap_or(0),
         });
     }
 }
 
-fn normalized_key(title: &str, uploader: Option<&str>, video_id: Option<&str>, url: &str) -> String {
+fn normalized_key(
+    title: &str,
+    uploader: Option<&str>,
+    video_id: Option<&str>,
+    url: &str,
+) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}\u{1f}{}",
         title.trim().to_ascii_lowercase(),
@@ -158,7 +162,12 @@ fn payload(
 pub(crate) fn render_playlist_candidates_markdown(payload: &serde_json::Value) -> String {
     let count = payload["candidates"].as_array().map_or(0, Vec::len);
     let mut lines = vec![format!("{count} Plex playlist candidate(s).")];
-    for item in payload["candidates"].as_array().into_iter().flatten().take(10) {
+    for item in payload["candidates"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(10)
+    {
         let title = item["title"].as_str().unwrap_or("Untitled");
         let uploader = item["uploader"].as_str().unwrap_or("Unknown artist");
         lines.push(format!("- {title} - {uploader}"));

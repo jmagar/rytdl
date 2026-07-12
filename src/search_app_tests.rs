@@ -63,9 +63,7 @@ fn app_metadata_allows_plex_external_destinations() {
     assert!(redirects
         .iter()
         .any(|value| value == "https://listen.plex.tv"));
-    assert!(redirects
-        .iter()
-        .any(|value| value == "https://app.plex.tv"));
+    assert!(redirects.iter().any(|value| value == "https://app.plex.tv"));
 }
 
 #[test]

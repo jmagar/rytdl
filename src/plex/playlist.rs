@@ -55,6 +55,7 @@ pub fn apply_audio_tracks(
     run_playlist_plan(&mut transport, playlist, tracks, true)
 }
 
+#[cfg(test)]
 pub(crate) fn preview_audio_tracks_with_transport(
     transport: &mut impl PlexTransport,
     playlist: &str,
@@ -63,6 +64,7 @@ pub(crate) fn preview_audio_tracks_with_transport(
     run_playlist_plan(transport, playlist, dedup_tracks(tracks), false)
 }
 
+#[cfg(test)]
 pub(crate) fn apply_audio_tracks_with_transport(
     transport: &mut impl PlexTransport,
     playlist: &str,
