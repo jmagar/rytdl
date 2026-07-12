@@ -636,9 +636,55 @@ pub fn run_plex_playlist(cfg: &Config, input: PlexPlaylistInput) -> Result<Strin
             ))
         }
         PlexPlaylistAction::Preview | PlexPlaylistAction::Apply => {
-            bail!("Plex playlist {:?} is not implemented yet", input.action);
+            let playlist = input
+                .playlist
+                .clone()
+                .or_else(|| cfg.plex_playlist.clone())
+                .unwrap_or_else(|| crate::config::DEFAULT_PLEX_PLAYLIST.to_string());
+            let candidates = crate::history::playlist_candidates(cfg, input.limit as usize)?;
+            let wanted: std::collections::BTreeSet<&str> =
+                input.candidate_ids.iter().map(String::as_str).collect();
+            let tracks: Vec<crate::plex::PlexTrackInput> = candidates
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    wanted.is_empty() || wanted.contains(candidate.candidate_id.as_str())
+                })
+                .map(|candidate| crate::plex::PlexTrackInput {
+                    title: candidate.title.clone(),
+                    uploader: candidate.uploader.clone(),
+                })
+                .collect();
+            let result = match input.action {
+                PlexPlaylistAction::Preview => {
+                    crate::plex::preview_audio_tracks(cfg, &playlist, &tracks)?
+                }
+                PlexPlaylistAction::Apply => {
+                    crate::plex::apply_audio_tracks(cfg, &playlist, &tracks)?
+                }
+                PlexPlaylistAction::ListCandidates => unreachable!(),
+            };
+            Ok(render(
+                &serde_json::to_value(&result)?,
+                input.response_format,
+                render_plex_playlist_markdown,
+            ))
         }
     }
+}
+
+fn render_plex_playlist_markdown(value: &serde_json::Value) -> String {
+    let playlist = value["playlist"].as_str().unwrap_or("Plex playlist");
+    let matched = value["matched"].as_u64().unwrap_or(0);
+    let added = value["added"].as_u64().unwrap_or(0);
+    let already = value["already_present"].as_u64().unwrap_or(0);
+    let mut lines = vec![format!(
+        "{playlist}: {matched} matched, {added} added, {already} already present."
+    )];
+    if let Some(url) = value["plexamp_url"].as_str() {
+        lines.push(format!("Plexamp: {url}"));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
