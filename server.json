@@ -1,0 +1,99 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.dinglebear/ytdl-rmcp",
+  "title": "YTDL RMCP",
+  "description": "Rust MCP server and CLI for yt-dlp search, downloads, metadata, transfers, and Plex playlists.",
+  "version": "1.0.2",
+  "websiteUrl": "https://github.com/jmagar/ytdl-rmcp",
+  "repository": {
+    "url": "https://github.com/jmagar/ytdl-rmcp",
+    "source": "github",
+    "id": "1259656855"
+  },
+  "icons": [
+    {
+      "src": "https://avatars.githubusercontent.com/u/38927646?v=4",
+      "mimeType": "image/png",
+      "sizes": [
+        "460x460"
+      ],
+      "theme": "dark"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "ytdl-rmcp",
+      "version": "1.0.2",
+      "runtimeHint": "npx",
+      "environmentVariables": [
+        {
+          "name": "YTDLP_PLEX_URL",
+          "description": "Optional Plex server URL for playlist and Plex sync workflows.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "placeholder": "http://plex.local:32400"
+        },
+        {
+          "name": "YTDLP_PLEX_TOKEN",
+          "description": "Optional Plex token for playlist and Plex sync workflows.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "YTDLP_ACOUSTID_CLIENT_KEY",
+          "description": "Optional AcoustID client key for identification and auto-retagging workflows.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": true
+        },
+        {
+          "name": "YTDL_RMCP_BINARY_VERSION",
+          "description": "Optional GitHub release tag override for the downloaded YTDL RMCP binary.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "placeholder": "v1.0.1"
+        },
+        {
+          "name": "YTDL_RMCP_RELEASE_BASE_URL",
+          "description": "Optional release download base URL override.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "https://github.com/jmagar/ytdl-rmcp/releases/download",
+          "placeholder": "https://github.com/jmagar/ytdl-rmcp/releases/download"
+        },
+        {
+          "name": "RUST_LOG",
+          "description": "Tracing filter for YTDL RMCP logs.",
+          "format": "string",
+          "isRequired": false,
+          "isSecret": false,
+          "default": "info",
+          "placeholder": "info"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "_meta": {
+    "io.modelcontextprotocol.registry/publisher-provided": {
+      "namespace": "ai.dinglebear",
+      "dnsDomain": "dinglebear.ai",
+      "distribution": {
+        "npm": "ytdl-rmcp@1.0.2",
+        "nodePackage": "ytdl-rmcp"
+      },
+      "buildInfo": {
+        "version": "1.0.2",
+        "repository": "https://github.com/jmagar/ytdl-rmcp"
+      }
+    }
+  }
+}

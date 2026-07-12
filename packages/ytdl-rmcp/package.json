@@ -1,6 +1,6 @@
 {
   "name": "ytdl-rmcp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Node launcher for the ytdl-rmcp Rust MCP server and rytdl CLI for yt-dlp media workflows.",
   "license": "MIT",
   "repository": {
@@ -50,5 +50,7 @@
     "codex",
     "gemini",
     "mcp-apps"
-  ]
+  ],
+  "mcpName": "ai.dinglebear/ytdl-rmcp",
+  "binaryVersion": "1.0.1"
 }
