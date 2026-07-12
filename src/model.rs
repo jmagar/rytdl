@@ -339,6 +339,42 @@ impl StatsInput {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PlexPlaylistAction {
+    ListCandidates,
+    Preview,
+    Apply,
+}
+
+fn default_plex_playlist_action() -> PlexPlaylistAction {
+    PlexPlaylistAction::ListCandidates
+}
+
+fn default_playlist_limit() -> u32 {
+    100
+}
+
+/// Input for `youtube_plex_playlist`.
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct PlexPlaylistInput {
+    /// Action to run: list candidates, preview Plex matches, or apply playlist changes.
+    #[serde(default = "default_plex_playlist_action")]
+    pub action: PlexPlaylistAction,
+    /// Plex playlist title or ID. Falls back to YTDLP_PLEX_PLAYLIST/default.
+    #[serde(default)]
+    pub playlist: Option<String>,
+    /// Stable opaque history candidate IDs to use for preview/apply. Empty means all candidates.
+    #[serde(default)]
+    pub candidate_ids: Vec<String>,
+    /// Number of successful transferred audio history candidates to inspect.
+    #[serde(default = "default_playlist_limit")]
+    pub limit: u32,
+    /// 'markdown' (human-readable) or 'json' (machine-readable).
+    #[serde(default)]
+    pub response_format: ResponseFormat,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct SearchResultItem {
     pub title: String,

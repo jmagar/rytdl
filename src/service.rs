@@ -20,7 +20,8 @@ use crate::bootstrap;
 use crate::config::Config;
 use crate::downloader::{self, FetchOptions, ItemResult};
 use crate::model::{
-    DownloadInput, IdentifyInput, ProbeInput, SearchInput, SearchPayload, StatsInput,
+    DownloadInput, IdentifyInput, PlexPlaylistAction, PlexPlaylistInput, ProbeInput, SearchInput,
+    SearchPayload, StatsInput,
 };
 use crate::urls::strip_mix_params;
 
@@ -622,6 +623,22 @@ pub fn run_stats(cfg: &Config, input: StatsInput) -> Result<String> {
         input.response_format,
         crate::history::render_stats_markdown,
     ))
+}
+
+pub fn run_plex_playlist(cfg: &Config, input: PlexPlaylistInput) -> Result<String> {
+    match input.action {
+        PlexPlaylistAction::ListCandidates => {
+            let payload = crate::history::playlist_candidates(cfg, input.limit as usize)?;
+            Ok(render(
+                &serde_json::to_value(&payload)?,
+                input.response_format,
+                crate::history::render_playlist_candidates_markdown,
+            ))
+        }
+        PlexPlaylistAction::Preview | PlexPlaylistAction::Apply => {
+            bail!("Plex playlist {:?} is not implemented yet", input.action);
+        }
+    }
 }
 
 #[cfg(test)]

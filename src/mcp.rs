@@ -11,7 +11,9 @@ use rmcp::model::{
 use rmcp::{tool, tool_handler, tool_router, ErrorData, RoleServer, ServerHandler};
 
 use crate::config::Config;
-use crate::model::{DownloadInput, IdentifyInput, ProbeInput, SearchInput, StatsInput};
+use crate::model::{
+    DownloadInput, IdentifyInput, PlexPlaylistInput, ProbeInput, SearchInput, StatsInput,
+};
 use crate::search_app;
 use crate::service;
 
@@ -235,6 +237,37 @@ impl YtdlServer {
             ),
             Err(e) => {
                 tracing::warn!(service = "ytdl-rmcp", tool = "youtube_stats", error = %e, "tool dispatch error")
+            }
+        }
+        Ok(text_tool_result(result))
+    }
+
+    /// Build or preview Plex audio playlists from successful transferred audio
+    /// download history. `list_candidates` is read-only; preview/apply share the
+    /// same resolver path as Plex playlist mutation support.
+    #[tool(
+        name = "youtube_plex_playlist",
+        description = "List successful transferred audio history candidates, preview Plex playlist matches, or apply an idempotent Plex playlist update.",
+        meta = search_app::tool_meta()
+    )]
+    async fn youtube_plex_playlist(
+        &self,
+        Parameters(input): Parameters<PlexPlaylistInput>,
+    ) -> Result<CallToolResult, ErrorData> {
+        tracing::info!(
+            service = "ytdl-rmcp",
+            tool = "youtube_plex_playlist",
+            "tool dispatch start"
+        );
+        let result = service::run_plex_playlist(&self.cfg, input);
+        match &result {
+            Ok(_) => tracing::info!(
+                service = "ytdl-rmcp",
+                tool = "youtube_plex_playlist",
+                "tool dispatch success"
+            ),
+            Err(e) => {
+                tracing::warn!(service = "ytdl-rmcp", tool = "youtube_plex_playlist", error = %e, "tool dispatch error")
             }
         }
         Ok(text_tool_result(result))
