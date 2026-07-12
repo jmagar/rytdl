@@ -458,6 +458,19 @@ fn parent_title_satisfies_artist_match() {
 }
 
 #[test]
+fn playback_links_use_path_component_percent_encoding() {
+    let links = playback_links("machine id", "playlist 1");
+
+    assert!(links.plexamp_url.contains("machine%20id"));
+    assert!(links.plexamp_url.contains("playlist%201"));
+    assert!(!links.plexamp_url.contains('+'));
+    assert!(links.plex_web_url.contains("machine%20id"));
+    assert!(links
+        .plex_web_url
+        .contains("%2Fplaylists%2Fplaylist%201%2Fitems"));
+}
+
+#[test]
 fn redact_url_replaces_plex_token_value() {
     let transport = UreqPlexTransport {
         base_url: "http://plex.local:32400".to_string(),

@@ -171,16 +171,18 @@ fn playlist_candidates_limit_returns_most_recent_matches() {
         &history,
         concat!(
             "{\"timestamp\":\"2026-07-12T01:00:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":10,\"items\":[{\"url\":\"https://youtu.be/a\",\"status\":\"ok\",\"title\":\"Old Song\",\"uploader\":\"Artist A\",\"video_id\":\"aaa\",\"files\":[{\"kind\":\"audio\",\"bytes\":10,\"title\":\"Old Song\",\"uploader\":\"Artist A\",\"video_id\":\"aaa\"}]}]}\n",
-            "{\"timestamp\":\"2026-07-12T01:01:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":20,\"items\":[{\"url\":\"https://youtu.be/b\",\"status\":\"ok\",\"title\":\"New Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\",\"files\":[{\"kind\":\"audio\",\"bytes\":20,\"title\":\"New Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\"}]}]}\n"
+            "{\"timestamp\":\"2026-07-12T01:01:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":20,\"items\":[{\"url\":\"https://youtu.be/b\",\"status\":\"ok\",\"title\":\"Middle Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\",\"files\":[{\"kind\":\"audio\",\"bytes\":20,\"title\":\"Middle Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\"}]}]}\n",
+            "{\"timestamp\":\"2026-07-12T01:02:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":30,\"items\":[{\"url\":\"https://youtu.be/c\",\"status\":\"ok\",\"title\":\"New Song\",\"uploader\":\"Artist C\",\"video_id\":\"ccc\",\"files\":[{\"kind\":\"audio\",\"bytes\":30,\"title\":\"New Song\",\"uploader\":\"Artist C\",\"video_id\":\"ccc\"}]}]}\n"
         ),
     )
     .unwrap();
     let cfg = config_with_history(&history);
 
-    let payload = crate::history::playlist_candidates(&cfg, 1).unwrap();
+    let payload = crate::history::playlist_candidates(&cfg, 2).unwrap();
 
-    assert_eq!(payload.candidates.len(), 1);
+    assert_eq!(payload.candidates.len(), 2);
     assert_eq!(payload.candidates[0].title, "New Song");
+    assert_eq!(payload.candidates[1].title, "Middle Song");
 }
 
 #[test]

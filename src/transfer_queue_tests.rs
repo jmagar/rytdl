@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
 use crate::transfer_queue::{
-    list_queue, prune_missing, record_failed_transfer, retry_one, TransferFailureManifestInput,
+    list_queue, prune_missing, record_failed_transfer, redact_transfer_error, retry_one,
+    TransferFailureManifestInput,
 };
 
 fn test_config() -> crate::config::Config {
@@ -87,8 +88,24 @@ fn prune_missing_removes_only_missing_staging_entries() {
     assert!(list_queue(&cfg).unwrap().entries.is_empty());
 }
 
+#[test]
+fn redact_transfer_error_masks_common_credential_shapes() {
+    let redacted = redact_transfer_error(
+        "failed https://user:pass@example.test/path Authorization: Bearer abc123 --token=secret password=hunter2",
+    );
+
+    assert!(!redacted.contains("user:pass"));
+    assert!(!redacted.contains("abc123"));
+    assert!(!redacted.contains("secret"));
+    assert!(!redacted.contains("hunter2"));
+    assert!(redacted.contains("https://REDACTED@example.test/path"));
+    assert!(redacted.contains("Bearer REDACTED"));
+    assert!(redacted.contains("--token=REDACTED"));
+    assert!(redacted.contains("password=REDACTED"));
+}
+
 #[tokio::test]
-async fn retry_success_removes_staging_before_manifest() {
+async fn retry_missing_staged_kind_returns_structured_failure_and_keeps_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let staging = dir.path().join("stage");
     std::fs::create_dir_all(&staging).unwrap();
@@ -109,7 +126,11 @@ async fn retry_success_removes_staging_before_manifest() {
 
     let result = retry_one(&cfg, &entry.manifest_id, false).await.unwrap();
 
-    assert_eq!(result.completed, 1);
-    assert!(!staging.exists());
-    assert!(!manifest_path.exists());
+    assert_eq!(result.retried, 1);
+    assert_eq!(result.completed, 0);
+    assert_eq!(result.failed, 1);
+    assert!(result.errors[0].contains("no staged target directories"));
+    assert!(staging.exists());
+    assert!(manifest_path.exists());
+    assert_eq!(list_queue(&cfg).unwrap().entries[0].attempts, 1);
 }

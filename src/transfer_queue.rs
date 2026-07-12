@@ -137,25 +137,42 @@ pub(crate) async fn retry_one(
     manifest_id: &str,
     keep_local: bool,
 ) -> Result<TransferQueueDrainResult> {
-    let queue_dir = queue_dir(cfg);
-    let _lock = QueueLock::acquire(&queue_dir)?;
-    let entry = retry_entry_unlocked(cfg, &queue_dir, manifest_id, keep_local).await?;
-    Ok(TransferQueueDrainResult {
+    let mut result = TransferQueueDrainResult {
         retried: 1,
-        completed: usize::from(entry.status == "completed"),
-        failed: usize::from(entry.status != "completed"),
-        entries: vec![entry],
+        completed: 0,
+        failed: 0,
+        entries: Vec::new(),
         errors: Vec::new(),
-    })
+    };
+    match retry_entry(cfg, manifest_id, keep_local).await {
+        Ok(entry) if entry.status == "completed" => {
+            result.completed = 1;
+            result.entries.push(entry);
+        }
+        Ok(entry) => {
+            result.failed = 1;
+            result.errors.extend(entry.last_error.iter().cloned());
+            result.entries.push(entry);
+        }
+        Err(error) => {
+            result.failed = 1;
+            result
+                .errors
+                .push(redact_transfer_error(&error.to_string()));
+        }
+    }
+    Ok(result)
 }
 
 pub(crate) async fn retry_all(cfg: &Config, keep_local: bool) -> Result<TransferQueueDrainResult> {
     let queue_dir = queue_dir(cfg);
-    let _lock = QueueLock::acquire(&queue_dir)?;
-    let ids: Vec<String> = read_entries_unlocked(&queue_dir)?
-        .into_iter()
-        .map(|entry| entry.manifest_id)
-        .collect();
+    let ids: Vec<String> = {
+        let _lock = QueueLock::acquire(&queue_dir)?;
+        read_entries_unlocked(&queue_dir)?
+            .into_iter()
+            .map(|entry| entry.manifest_id)
+            .collect()
+    };
     let mut result = TransferQueueDrainResult {
         retried: 0,
         completed: 0,
@@ -165,13 +182,14 @@ pub(crate) async fn retry_all(cfg: &Config, keep_local: bool) -> Result<Transfer
     };
     for manifest_id in ids {
         result.retried += 1;
-        match retry_entry_unlocked(cfg, &queue_dir, &manifest_id, keep_local).await {
+        match retry_entry(cfg, &manifest_id, keep_local).await {
             Ok(entry) if entry.status == "completed" => {
                 result.completed += 1;
                 result.entries.push(entry);
             }
             Ok(entry) => {
                 result.failed += 1;
+                result.errors.extend(entry.last_error.iter().cloned());
                 result.entries.push(entry);
             }
             Err(error) => {
@@ -203,24 +221,76 @@ pub(crate) fn queue_dir(cfg: &Config) -> PathBuf {
 }
 
 pub(crate) fn redact_transfer_error(error: &str) -> String {
+    let parts = split_whitespace_preserving(error);
     let mut output = String::with_capacity(error.len());
-    let mut token = String::new();
-    for ch in error.chars() {
-        if ch.is_whitespace() {
-            output.push_str(&redact_error_token(&token));
-            token.clear();
-            output.push(ch);
-        } else {
-            token.push(ch);
+    let mut redact_next = false;
+    for (is_whitespace, part) in parts {
+        if is_whitespace {
+            output.push_str(&part);
+            continue;
         }
+        if redact_next {
+            output.push_str("REDACTED");
+            redact_next = false;
+            continue;
+        }
+        let redacted = redact_error_token(&part);
+        if part.eq_ignore_ascii_case("bearer") {
+            redact_next = true;
+        }
+        output.push_str(&redacted);
     }
-    output.push_str(&redact_error_token(&token));
     output
 }
 
+fn split_whitespace_preserving(value: &str) -> Vec<(bool, String)> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut current_is_whitespace = None;
+    for ch in value.chars() {
+        let is_whitespace = ch.is_whitespace();
+        if current_is_whitespace == Some(is_whitespace) || current_is_whitespace.is_none() {
+            current.push(ch);
+            current_is_whitespace = Some(is_whitespace);
+            continue;
+        }
+        parts.push((
+            current_is_whitespace.unwrap_or(false),
+            std::mem::take(&mut current),
+        ));
+        current.push(ch);
+        current_is_whitespace = Some(is_whitespace);
+    }
+    if !current.is_empty() {
+        parts.push((current_is_whitespace.unwrap_or(false), current));
+    }
+    parts
+}
+
+// Token-level redaction intentionally covers common credential shapes only. It
+// avoids parsing arbitrary command output while masking values likely to contain
+// auth material in SSH/rsync/rclone/HTTP errors.
 fn redact_error_token(token: &str) -> String {
     let lower = token.to_ascii_lowercase();
-    for marker in ["token=", "password=", "secret=", "key="] {
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        if let Ok(mut url) = url::Url::parse(token.trim_matches(['\'', '"', ',', ';'])) {
+            if !url.username().is_empty() || url.password().is_some() {
+                let _ = url.set_username("REDACTED");
+                let _ = url.set_password(None);
+                return url.to_string();
+            }
+        }
+    }
+    for marker in [
+        "token=",
+        "password=",
+        "secret=",
+        "key=",
+        "--token=",
+        "--password=",
+        "--secret=",
+        "--key=",
+    ] {
         if lower.starts_with(marker) {
             return format!("{marker}REDACTED");
         }
@@ -228,24 +298,34 @@ fn redact_error_token(token: &str) -> String {
     token.to_string()
 }
 
-async fn retry_entry_unlocked(
+async fn retry_entry(
     cfg: &Config,
-    queue_dir: &Path,
     manifest_id: &str,
     keep_local: bool,
 ) -> Result<TransferQueueEntry> {
+    let queue_dir = queue_dir(cfg);
     validate_manifest_id(manifest_id)?;
     let manifest_path = queue_dir.join(format!("{manifest_id}.json"));
-    let mut entry = read_manifest(&manifest_path)?;
+    let mut entry = {
+        let _lock = QueueLock::acquire(&queue_dir)?;
+        let mut entry = read_manifest(&manifest_path)?;
+        if entry.manifest_id != manifest_id {
+            bail!("transfer queue manifest id does not match file name");
+        }
+        entry.attempts = entry.attempts.saturating_add(1);
+        entry.updated_at = timestamp_now();
+        entry.status = "running".to_string();
+        write_manifest(&entry)?;
+        entry
+    };
     let staging_path = PathBuf::from(&entry.staging_path);
     if !staging_path.is_dir() {
         bail!("staging directory no longer exists for manifest {manifest_id}");
     }
 
-    entry.attempts = entry.attempts.saturating_add(1);
-    entry.updated_at = timestamp_now();
     match drain_entry(cfg, &entry, &staging_path).await {
         Ok(()) => {
+            let _lock = QueueLock::acquire(&queue_dir)?;
             entry.status = "completed".to_string();
             entry.last_error = None;
             if !keep_local {
@@ -262,17 +342,20 @@ async fn retry_entry_unlocked(
             Ok(entry)
         }
         Err(error) => {
+            let _lock = QueueLock::acquire(&queue_dir)?;
             let redacted = redact_transfer_error(&error.to_string());
             entry.status = "pending".to_string();
+            entry.updated_at = timestamp_now();
             entry.last_error = Some(redacted.clone());
             write_manifest(&entry)?;
-            bail!("{redacted}");
+            Ok(entry)
         }
     }
 }
 
 async fn drain_entry(cfg: &Config, entry: &TransferQueueEntry, staging_path: &Path) -> Result<()> {
     let ssh_opts = cfg.all_ssh_opts();
+    let mut transferred_any = false;
     for target in &entry.targets {
         let parsed = crate::transfer::TargetPath::parse(&target.target_path)?;
         if matches!(parsed, crate::transfer::TargetPath::Local(_)) && !cfg.allow_local_targets {
@@ -284,6 +367,7 @@ async fn drain_entry(cfg: &Config, entry: &TransferQueueEntry, staging_path: &Pa
         if !kind_dir.is_dir() {
             continue;
         }
+        transferred_any = true;
         let transfer = async {
             crate::transfer::ensure_target_dir(&parsed, &ssh_opts).await?;
             crate::transfer::transfer_to_target(&kind_dir, &parsed, &ssh_opts).await
@@ -296,6 +380,9 @@ async fn drain_entry(cfg: &Config, entry: &TransferQueueEntry, staging_path: &Pa
                 cfg.transfer_timeout().as_secs()
             ),
         }
+    }
+    if !transferred_any {
+        bail!("no staged target directories were found for transfer queue manifest");
     }
     Ok(())
 }
@@ -334,8 +421,11 @@ fn write_manifest(entry: &TransferQueueEntry) -> Result<()> {
             entry.manifest_path.display()
         )
     })?;
-    let dir = File::open(parent)?;
-    dir.sync_all()?;
+    #[cfg(unix)]
+    {
+        let dir = File::open(parent)?;
+        dir.sync_all()?;
+    }
     Ok(())
 }
 

@@ -91,12 +91,19 @@ fn run_playlist_plan(
     result.machine_identifier = Some(machine_id.clone());
 
     for track in tracks {
-        let Some(rating_key) = find_track_rating_key(transport, &track)? else {
-            result.missing.push(PlexMissingTrack {
-                title: track.title,
-                uploader: track.uploader,
-            });
-            continue;
+        let rating_key = match find_track_rating_key(transport, &track) {
+            Ok(Some(rating_key)) => rating_key,
+            Ok(None) => {
+                result.missing.push(PlexMissingTrack {
+                    title: track.title,
+                    uploader: track.uploader,
+                });
+                continue;
+            }
+            Err(error) => {
+                result.errors.push(format!("{}: {error}", track.title));
+                continue;
+            }
         };
         result.matched += 1;
         if state.contains(&rating_key) {
@@ -104,7 +111,10 @@ fn run_playlist_plan(
             continue;
         }
         if mutate {
-            state.add_track(transport, playlist, &machine_id, &rating_key)?;
+            if let Err(error) = state.add_track(transport, playlist, &machine_id, &rating_key) {
+                result.errors.push(format!("{}: {error}", track.title));
+                continue;
+            }
             result.added += 1;
         }
     }
@@ -153,5 +163,14 @@ pub fn playback_links(machine_id: &str, playlist_id: &str) -> PlexPlaybackLinks 
 }
 
 fn encode_component(value: &str) -> String {
-    url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char);
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }

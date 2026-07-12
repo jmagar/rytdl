@@ -260,7 +260,7 @@ impl YtdlServer {
             tool = "youtube_plex_playlist",
             "tool dispatch start"
         );
-        let result = service::run_plex_playlist(&self.cfg, input);
+        let result = service::run_plex_playlist(&self.cfg, input).await;
         match &result {
             Ok(_) => tracing::info!(
                 service = "ytdl-rmcp",

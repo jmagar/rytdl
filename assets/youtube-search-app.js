@@ -51,7 +51,7 @@ function formatDuration(seconds) {
 }
 
 function escapeHtml(value) {
-  return String(value || "").replace(/[&<>"']/g, (char) => ({
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
     "<": "&lt;",
     ">": "&gt;",
@@ -215,6 +215,7 @@ function renderPlaylistCandidates(payload) {
 }
 
 function renderPlaylistResult(payload) {
+  els.playlistResults.querySelector(".playlist-summary")?.remove();
   const linkButtons = payload.plexamp_url && isAllowedExternalUrl(payload.plexamp_url)
     ? `<div class="actions">
         <button type="button" data-open-url="${escapeHtml(payload.plexamp_url)}">Open in Plexamp</button>
@@ -222,7 +223,7 @@ function renderPlaylistResult(payload) {
       </div>`
     : "";
   els.playlistResults.insertAdjacentHTML("afterbegin", `
-    <div class="row">
+    <div class="row playlist-summary">
       <div class="copy">
         <h2 class="title">${escapeHtml(payload.playlist || "Plex playlist")}</h2>
         <div class="meta">${escapeHtml(payload.matched || 0)} matched, ${escapeHtml(payload.added || 0)} added, ${escapeHtml(payload.already_present || 0)} already present, ${(payload.missing || []).length} missing</div>

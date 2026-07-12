@@ -8,11 +8,14 @@ Tool calls arrive at [`mcp.rs`](../../src/mcp.rs) via the `#[tool]` macro on `Yt
 
 - `urls` — String or array of URLs (validated as `http`/`https`)
 - `mode` — Audio, video, or both (default: audio)
-- `remote` — SSH hostname (overrides `YTDLP_REMOTE`)
-- `dest_path` — Audio destination on remote (overrides `YTDLP_REMOTE_PATH`)
-- `video_dest_path` — Video destination (overrides `YTDLP_VIDEO_REMOTE_PATH`)
+- `target_path` — Audio destination (`/path`, `host:/path`, `ssh:host:/path`, or `rclone:remote:path`)
+- `video_target_path` — Video destination; falls back to `target_path`
 - `audio_format` — Codec (`mp3`, `m4a`, etc.; overrides `YTDLP_AUDIO_FORMAT`)
 - `use_archive` — Skip already-downloaded IDs (overrides `YTDLP_USE_ARCHIVE`)
+
+Legacy `remote`, `dest_path`, and `video_dest_path` inputs still work for
+compatibility, but new integrations should use `target_path` and
+`video_target_path`.
 
 ## Orchestration
 
@@ -105,7 +108,7 @@ When Plex credentials are configured (`YTDLP_PLEX_URL`, `YTDLP_PLEX_TOKEN`, `YTD
 Plexamp links. The playlist mutation path uses the official Plex Media Server
 API; the `listen.plex.tv` Plexamp link shape is generated and unverified.
 
-See [`plex.rs`](../../src/plex.md) for the Plex client implementation.
+See [`plex.rs`](../../src/plex.rs) for the Plex client implementation.
 
 ## Error handling
 

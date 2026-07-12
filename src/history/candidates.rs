@@ -105,7 +105,7 @@ fn collect_item_candidates(
             .or_else(|| item["video_id"].as_str())
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
-        let key = normalized_key(&title, uploader.as_deref(), video_id.as_deref(), &url);
+        let key = normalized_key(&title, uploader.as_deref(), video_id.as_deref());
         let candidate_id = candidate_id(&key);
         if !seen.insert(key) {
             candidates.retain(|candidate| candidate.candidate_id != candidate_id);
@@ -125,19 +125,15 @@ fn collect_item_candidates(
     }
 }
 
-fn normalized_key(
-    title: &str,
-    uploader: Option<&str>,
-    video_id: Option<&str>,
-    url: &str,
-) -> String {
-    format!(
-        "{}\u{1f}{}\u{1f}{}\u{1f}{}",
-        title.trim().to_ascii_lowercase(),
-        uploader.unwrap_or("").trim().to_ascii_lowercase(),
-        video_id.unwrap_or("").trim().to_ascii_lowercase(),
-        url.trim().to_ascii_lowercase()
-    )
+fn normalized_key(title: &str, uploader: Option<&str>, video_id: Option<&str>) -> String {
+    let title = title.trim().to_ascii_lowercase();
+    let uploader = uploader.unwrap_or("").trim().to_ascii_lowercase();
+    let video_id = video_id.unwrap_or("").trim().to_ascii_lowercase();
+    if video_id.is_empty() {
+        format!("{title}\u{1f}{uploader}")
+    } else {
+        video_id
+    }
 }
 
 fn candidate_id(key: &str) -> String {

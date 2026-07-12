@@ -355,6 +355,8 @@ fn default_playlist_limit() -> u32 {
     100
 }
 
+pub const MAX_PLAYLIST_LIMIT: u32 = 500;
+
 /// Input for `youtube_plex_playlist`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub struct PlexPlaylistInput {
@@ -367,12 +369,22 @@ pub struct PlexPlaylistInput {
     /// Stable opaque history candidate IDs to use for preview/apply. Empty means all candidates.
     #[serde(default)]
     pub candidate_ids: Vec<String>,
-    /// Number of successful transferred audio history candidates to inspect.
+    /// Number of successful transferred audio history candidates to inspect. 0 means no limit; positive values are capped at 500.
     #[serde(default = "default_playlist_limit")]
     pub limit: u32,
     /// 'markdown' (human-readable) or 'json' (machine-readable).
     #[serde(default)]
     pub response_format: ResponseFormat,
+}
+
+impl PlexPlaylistInput {
+    pub fn effective_limit(&self) -> usize {
+        if self.limit == 0 {
+            0
+        } else {
+            self.limit.min(MAX_PLAYLIST_LIMIT) as usize
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]

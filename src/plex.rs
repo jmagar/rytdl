@@ -19,7 +19,9 @@ pub use playlist::{
 };
 
 #[cfg(test)]
-pub(crate) use playlist::{apply_audio_tracks_with_transport, preview_audio_tracks_with_transport};
+pub(crate) use playlist::{
+    apply_audio_tracks_with_transport, playback_links, preview_audio_tracks_with_transport,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct PlexPlaylistUpdate {
@@ -376,12 +378,12 @@ pub(crate) fn transport_from_config(cfg: &Config) -> Result<UreqPlexTransport> {
         .plex_url
         .as_deref()
         .filter(|s| !s.trim().is_empty())
-        .context("YTDLP_PLEX_URL is required when plex_playlist is set")?;
+        .context("YTDLP_PLEX_URL is required for Plex playlist actions")?;
     let token = cfg
         .plex_token
         .as_deref()
         .filter(|s| !s.trim().is_empty())
-        .context("YTDLP_PLEX_TOKEN is required when plex_playlist is set")?;
+        .context("YTDLP_PLEX_TOKEN is required for Plex playlist actions")?;
     Ok(UreqPlexTransport {
         base_url: base_url.to_string(),
         token: token.to_string(),

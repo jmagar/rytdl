@@ -151,7 +151,7 @@
 
       <section class="view" data-view="search">
         <form class="toolbar" id="search-form">
-          <input id="query" name="query" autocomplete="off" placeholder="Search YouTube" />
+          <input id="query" name="query" autocomplete="off" placeholder="Search YouTube" aria-label="Search YouTube" />
           <button type="submit">Search</button>
         </form>
         <div class="results" id="results">
@@ -161,7 +161,7 @@
 
       <section class="view" data-view="stats" hidden>
         <div class="toolbar">
-          <input id="stats-limit" type="number" min="0" max="100" value="10" />
+          <input id="stats-limit" type="number" min="0" max="100" value="10" aria-label="Recent stats limit" />
           <button id="stats-refresh" type="button">Refresh</button>
         </div>
         <div id="stats-status" class="status"></div>
@@ -172,7 +172,7 @@
 
       <section class="view" data-view="playlist" hidden>
         <div class="toolbar multi">
-          <input id="playlist-name" type="text" placeholder="Playlist name" />
+          <input id="playlist-name" type="text" placeholder="Playlist name" aria-label="Playlist name" />
           <button id="playlist-refresh" type="button">Refresh</button>
           <button id="playlist-preview" type="button">Preview</button>
           <button id="playlist-apply" type="button">Apply</button>

@@ -142,8 +142,8 @@ link, not an official Plexamp API guarantee.
 List and drain server-created transfer failure manifests. Actions are `list`,
 `retry`, `retry_all`, and `prune`. Retry accepts only an opaque `manifest_id`,
 uses the original target paths recorded at failure time, and re-checks local
-target policy before transfer. The queue never accepts arbitrary filesystem
-paths.
+target policy before transfer. `prune` removes failure manifests whose staging
+directory is gone. The queue never accepts arbitrary filesystem paths.
 
 ### `youtube_identify` parameters
 
