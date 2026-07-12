@@ -1,6 +1,6 @@
 # Architecture Overview
 
-ytdl-mcp is a Rust-based MCP server built on the [`rmcp`](https://crates.io/crates/rmcp) crate, serving six tools over stdio transport. All source files stay under 500 LOC, with test files as siblings (`foo_tests.rs`).
+ytdl-mcp is a Rust-based MCP server built on the [`rmcp`](https://crates.io/crates/rmcp) crate, serving eight tools over stdio transport. All source files stay under 500 LOC where practical, with test files as siblings (`foo_tests.rs`).
 
 ## MCP server design
 
@@ -12,6 +12,8 @@ The server implements `rmcp::ServerHandler` via the `YtdlServer` struct in [`src
 - **`youtube_probe`** — Resolves metadata without downloading media (backed by [`service::run_probe`](../../src/service.rs))
 - **`youtube_identify`** — Fingerprints local audio and returns MusicBrainz candidates (backed by [`service::run_identify`](../../src/service.rs))
 - **`youtube_stats`** — Aggregates the JSONL download history ledger (backed by [`service::run_stats`](../../src/history.rs))
+- **`youtube_plex_playlist`** — Lists successful audio history candidates, previews Plex matches, and applies idempotent playlist updates (backed by [`service::run_plex_playlist`](../../src/service.rs))
+- **`youtube_transfer_queue`** — Lists, retries, retries all, or prunes retained-staging transfer manifests (backed by [`service::run_transfer_queue`](../../src/service.rs))
 
 ## Module layout
 
@@ -29,11 +31,14 @@ The server implements `rmcp::ServerHandler` via the `YtdlServer` struct in [`src
 | [`downloader.rs`](../../src/downloader.rs) | yt-dlp subprocess runner, output parsing, and `fetch` orchestration |
 | [`downloader/probe.rs`](../../src/downloader/probe.rs) | Metadata-only yt-dlp queries (no media download) |
 | [`transfer.rs`](../../src/transfer.rs) | rsync/scp subprocess wrapper with `ensure_remote_dir` |
+| [`transfer_queue.rs`](../../src/transfer_queue.rs) | Server-created transfer failure manifests and opaque-ID drain retries |
 | [`history.rs`](../../src/history.rs) | JSONL download ledger with rotation and `youtube_stats` aggregation |
+| [`history/candidates.rs`](../../src/history/candidates.rs) | Successful transferred audio history projected into stable Plex playlist candidates |
 | [`identify.rs`](../../src/identify.rs) | AcoustID fingerprint (fpcalc) → MusicBrainz lookup → retag preview |
 | [`identify/musicbrainz.rs`](../../src/identify/musicbrainz.rs) | MusicBrainz REST client and candidate scoring |
 | [`identify/tagger.rs`](../../src/identify/tagger.rs) | Writes preview tags into audio files via `lofty` |
 | [`plex.rs`](../../src/plex.rs) | Optional Plex playlist sync (match + add downloaded tracks) |
+| [`plex/playlist.rs`](../../src/plex/playlist.rs) | Shared Plex preview/apply resolver and best-effort Plexamp/Plex Web links |
 | [`search_app.rs`](../../src/search_app.rs) | MCP App HTML resource backing `youtube_search_ui` |
 | [`bootstrap.rs`](../../src/bootstrap.rs) | Tool resolution (env → PATH → cache → download) |
 | [`bootstrap/ytdlp.rs`](../../src/bootstrap/ytdlp.rs) | yt-dlp auto-download with SHA256 pinning |
@@ -70,3 +75,5 @@ Resolved tools are cached per-process in `service::ToolsCache` to avoid repeated
 - **Path validation** — `RemoteSpec` and `RemotePath` reject empty, option-like, and whitespace/control-character values
 - **Non-interactive SSH** — `BatchMode=yes` and `StrictHostKeyChecking=accept-new` prevent hanging on prompts
 - **No stdout pollution** — yt-dlp stdout is captured and parsed; all logging goes to stderr
+- **Transfer queue boundary** — Drains accept opaque manifest IDs only, re-parse recorded targets, re-check local-target policy, and redact transfer errors before persistence or rendering
+- **Plex link boundary** — User-facing Plexamp/Plex Web links are token-free and generated only from machine identifiers plus playlist IDs/keys

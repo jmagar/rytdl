@@ -26,9 +26,10 @@ Tool calls arrive at [`mcp.rs`](../../src/mcp.rs) via the `#[tool]` macro on `Yt
    - Metadata embedded via ffmpeg (title/artist/album/date + cover art)
    - Files organized as `Artist/Title [id].ext`
    - Optional auto-retag via AcoustID when `YTDLP_ACOUSTID_CLIENT_KEY` is set
-5. **Transfer to remote** — `transfer::transfer_items` rsync's/scp's to audio/video destinations
-6. **Append history** — JSONL entry written to `YTDLP_HISTORY_PATH` with file lock
-7. **Sync Plex playlist** — Optional Plex add (fails soft, doesn't fail download)
+5. **Transfer to remote** — `transfer::transfer_to_target` syncs each produced audio/video subtree
+6. **Record transfer queue manifest** — On transfer failure, `transfer_queue.rs` writes a server-created manifest while retained staging, manifest IDs, files, and original targets still coexist
+7. **Append history** — JSONL entry written to `YTDLP_HISTORY_PATH` with file lock
+8. **Sync Plex playlist** — Optional Plex add (fails soft, doesn't fail download)
 
 ## Download phase
 
@@ -52,7 +53,11 @@ Output is parsed from yt-dlp's `--print` JSON into `ItemResult` structs (file pa
 - **rsync** — Preferred when available: `rsync --protect-args -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"`
 - **scp** — Fallback for Windows or hosts without rsync: `scp -o BatchMode=yes -o StrictHostKeyChecking=accept-new`
 - **Remote dirs** — Created via `ssh mkdir -p` before transfer
-- **Failures** — Local staging copies kept for retry; errors reported without failing the whole batch
+- **Failures** — Local staging copies are kept for retry, errors are redacted, and a transfer queue manifest is written by the server
+
+`youtube_transfer_queue` lists and drains those retained-staging manifests.
+Retry accepts opaque manifest IDs only, re-parses the original target paths,
+and re-checks `YTDLP_ALLOW_LOCAL_TARGETS` before any local transfer.
 
 ## History and stats
 
@@ -82,20 +87,29 @@ Every successful download appends a JSONL entry to `YTDLP_HISTORY_PATH` (default
 
 The `youtube_stats` tool aggregates this ledger (totals, file kinds, uploaders, recent entries) via [`history::run_stats`](../../src/history.rs).
 
+`youtube_plex_playlist list_candidates` also reads the ledger, but only projects
+successful `transferred: true` audio files into stable opaque candidates. Failed
+or retained-staging transfers are intentionally excluded from playlist building.
+
 ## Plex sync
 
 When Plex credentials are configured (`YTDLP_PLEX_URL`, `YTDLP_PLEX_TOKEN`, `YTDLP_PLEX_PLAYLIST`), downloaded audio tracks are matched against the Plex library and added to the playlist (default: `yt-dlp Downloads`):
 
 1. Search library by title + artist
 2. Skip if track already in playlist
-3. Add track to playlist
+3. Add track to playlist idempotently
 4. Report Plex errors without failing the download
+
+`youtube_plex_playlist preview` uses the same resolver without mutating Plex.
+`youtube_plex_playlist apply` can return token-free Plex Web and best-effort
+Plexamp links. The playlist mutation path uses the official Plex Media Server
+API; the `listen.plex.tv` Plexamp link shape is generated and unverified.
 
 See [`plex.rs`](../../src/plex.md) for the Plex client implementation.
 
 ## Error handling
 
 - **Partial failures** — Individual URL errors are reported in the payload without failing the whole batch
-- **Transfer failures** — Local staging preserved; error reported with file list
+- **Transfer failures** — Local staging preserved, manifest created for drain, and transfer errors redacted before persistence/rendering
 - **Plex failures** — Logged but don't fail the download
 - **Bootstrap failures** — Tool resolution errors fail the download immediately (no tools, no work)

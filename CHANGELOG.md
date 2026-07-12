@@ -35,6 +35,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a Plex playlist builder for successful transferred audio history, with
+  read-only preview, idempotent apply, and best-effort Plexamp/Plex Web links.
+- Added a transfer queue for retained staging directories after transfer
+  failures, with list/retry/retry-all/prune actions.
+- Extended the MCP app with Playlist and Transfers tabs.
+
 ## [1.0.0] - 2026-07-11
 
 ### Security
