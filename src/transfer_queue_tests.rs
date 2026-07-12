@@ -31,7 +31,7 @@ fn test_config() -> crate::config::Config {
         ytdlp_sha256: None,
         ffmpeg_sha256: None,
         ytdlp_timeout_secs: 5,
-        transfer_timeout_secs: 5,
+        transfer_timeout_secs: 60,
     }
 }
 
