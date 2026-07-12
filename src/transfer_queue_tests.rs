@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::transfer_queue::{
-    list_queue, prune_missing, record_failed_transfer, TransferFailureManifestInput,
+    list_queue, prune_missing, record_failed_transfer, retry_one, TransferFailureManifestInput,
 };
 
 fn test_config() -> crate::config::Config {
@@ -85,4 +85,31 @@ fn prune_missing_removes_only_missing_staging_entries() {
     assert_eq!(result.pruned, 1);
     assert!(!kept.manifest_path.exists());
     assert!(list_queue(&cfg).unwrap().entries.is_empty());
+}
+
+#[tokio::test]
+async fn retry_success_removes_staging_before_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let staging = dir.path().join("stage");
+    std::fs::create_dir_all(&staging).unwrap();
+    let mut cfg = test_config();
+    cfg.history_path = Some(dir.path().join("downloads.jsonl").display().to_string());
+
+    let entry = record_failed_transfer(
+        &cfg,
+        TransferFailureManifestInput {
+            staging_path: staging.clone(),
+            targets: vec![("audio".into(), "tootie:/music".into())],
+            files: vec![PathBuf::from("audio/Artist/Song.mp3")],
+            last_error: "failed".into(),
+        },
+    )
+    .unwrap();
+    let manifest_path = entry.manifest_path.clone();
+
+    let result = retry_one(&cfg, &entry.manifest_id, false).await.unwrap();
+
+    assert_eq!(result.completed, 1);
+    assert!(!staging.exists());
+    assert!(!manifest_path.exists());
 }

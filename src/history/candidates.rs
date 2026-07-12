@@ -64,13 +64,14 @@ pub(crate) fn playlist_candidates(cfg: &Config, limit: usize) -> Result<Playlist
             let timestamp = entry["timestamp"].as_str().unwrap_or("").to_string();
             for item in entry["items"].as_array().into_iter().flatten() {
                 collect_item_candidates(item, &timestamp, &mut seen, &mut candidates);
-                if limit > 0 && candidates.len() >= limit {
-                    return Ok(payload(path, skipped_entries, candidates));
-                }
             }
         }
     }
 
+    candidates.reverse();
+    if limit > 0 && candidates.len() > limit {
+        candidates.truncate(limit);
+    }
     Ok(payload(path, skipped_entries, candidates))
 }
 
@@ -105,11 +106,12 @@ fn collect_item_candidates(
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
         let key = normalized_key(&title, uploader.as_deref(), video_id.as_deref(), &url);
-        if !seen.insert(key.clone()) {
-            continue;
+        let candidate_id = candidate_id(&key);
+        if !seen.insert(key) {
+            candidates.retain(|candidate| candidate.candidate_id != candidate_id);
         }
         candidates.push(PlaylistCandidate {
-            candidate_id: candidate_id(&key),
+            candidate_id,
             title,
             uploader,
             video_id,

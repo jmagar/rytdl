@@ -248,6 +248,10 @@ async function loadPlaylistCandidates() {
 async function previewPlaylist() {
   const playlist = els.playlistName.value.trim() || undefined;
   const candidate_ids = selectedCandidateIds();
+  if (!candidate_ids.length) {
+    setStatus("playlist", "Select at least one candidate before previewing.");
+    return;
+  }
   setStatus("playlist", "Previewing Plex matches...");
   const payload = await callTool("youtube_plex_playlist", {
     action: "preview",
@@ -263,6 +267,10 @@ async function previewPlaylist() {
 async function applyPlaylist() {
   const playlist = els.playlistName.value.trim() || undefined;
   const candidate_ids = selectedCandidateIds();
+  if (!candidate_ids.length) {
+    setStatus("playlist", "Select at least one candidate before applying.");
+    return;
+  }
   setStatus("playlist", "Applying Plex playlist...");
   const payload = await callTool("youtube_plex_playlist", {
     action: "apply",

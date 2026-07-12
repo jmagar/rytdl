@@ -248,9 +248,6 @@ async fn retry_entry_unlocked(
         Ok(()) => {
             entry.status = "completed".to_string();
             entry.last_error = None;
-            fs::remove_file(&manifest_path).with_context(|| {
-                format!("remove transfer queue manifest {}", manifest_path.display())
-            })?;
             if !keep_local {
                 fs::remove_dir_all(&staging_path).with_context(|| {
                     format!(
@@ -259,6 +256,9 @@ async fn retry_entry_unlocked(
                     )
                 })?;
             }
+            fs::remove_file(&manifest_path).with_context(|| {
+                format!("remove transfer queue manifest {}", manifest_path.display())
+            })?;
             Ok(entry)
         }
         Err(error) => {

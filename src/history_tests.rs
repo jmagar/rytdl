@@ -164,6 +164,26 @@ fn playlist_candidates_dedupe_on_normalized_track_identity() {
 }
 
 #[test]
+fn playlist_candidates_limit_returns_most_recent_matches() {
+    let dir = tempfile::tempdir().unwrap();
+    let history = dir.path().join("downloads.jsonl");
+    std::fs::write(
+        &history,
+        concat!(
+            "{\"timestamp\":\"2026-07-12T01:00:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":10,\"items\":[{\"url\":\"https://youtu.be/a\",\"status\":\"ok\",\"title\":\"Old Song\",\"uploader\":\"Artist A\",\"video_id\":\"aaa\",\"files\":[{\"kind\":\"audio\",\"bytes\":10,\"title\":\"Old Song\",\"uploader\":\"Artist A\",\"video_id\":\"aaa\"}]}]}\n",
+            "{\"timestamp\":\"2026-07-12T01:01:00Z\",\"mode\":\"audio\",\"target_path\":\"tootie:/music\",\"transferred\":true,\"total_files\":1,\"total_bytes\":20,\"items\":[{\"url\":\"https://youtu.be/b\",\"status\":\"ok\",\"title\":\"New Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\",\"files\":[{\"kind\":\"audio\",\"bytes\":20,\"title\":\"New Song\",\"uploader\":\"Artist B\",\"video_id\":\"bbb\"}]}]}\n"
+        ),
+    )
+    .unwrap();
+    let cfg = config_with_history(&history);
+
+    let payload = crate::history::playlist_candidates(&cfg, 1).unwrap();
+
+    assert_eq!(payload.candidates.len(), 1);
+    assert_eq!(payload.candidates[0].title, "New Song");
+}
+
+#[test]
 fn malformed_lines_are_skipped_not_panicked() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("downloads.jsonl");
