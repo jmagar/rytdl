@@ -9,6 +9,13 @@ const APP_SCRIPT: &str = include_str!("../assets/youtube-search-app.js");
 const APP_BRIDGE_PLACEHOLDER: &str = "{{MCP_EXT_APPS_BUNDLE}}";
 const APP_SCRIPT_PLACEHOLDER: &str = "{{YOUTUBE_SEARCH_APP_SCRIPT}}";
 const UI_META_KEY: &str = "ui";
+const THUMBNAIL_DOMAINS: [&str; 2] = ["https://i.ytimg.com", "https://img.youtube.com"];
+const EXTERNAL_LINK_DOMAINS: [&str; 4] = [
+    "https://www.youtube.com",
+    "https://youtu.be",
+    "https://listen.plex.tv",
+    "https://app.plex.tv",
+];
 
 pub fn list_app_resources() -> ListResourcesResult {
     ListResourcesResult {
@@ -43,28 +50,53 @@ pub fn resource_meta() -> Meta {
                     "https://img.youtube.com",
                     "https://listen.plex.tv",
                     "https://app.plex.tv"
-                ]
-            }
+                ],
+                "baseUriDomains": []
+            },
+            "permissions": {
+                "clipboardWrite": {}
+            },
+            "prefersBorder": true
     }));
+    meta.0.insert(
+        "openai/widgetDescription".into(),
+        json!(
+            "Interactive YouTube search results with probe, download, open-link, and follow-up actions."
+        ),
+    );
+    meta.0
+        .insert("openai/widgetPrefersBorder".into(), json!(true));
     meta.0.insert(
         "openai/widgetCSP".into(),
         json!({
             "connect_domains": [],
-            "resource_domains": [
-                "https://i.ytimg.com",
-                "https://img.youtube.com"
-            ],
-            "redirect_domains": [
-                "https://listen.plex.tv",
-                "https://app.plex.tv"
-            ]
+            "resource_domains": THUMBNAIL_DOMAINS,
+            "redirect_domains": EXTERNAL_LINK_DOMAINS
         }),
     );
     meta
 }
 
 pub fn tool_meta() -> Meta {
-    ui_meta(json!({ "resourceUri": RESOURCE_URI }))
+    let mut meta = ui_meta(json!({ "resourceUri": RESOURCE_URI }));
+    meta.0
+        .insert("openai/outputTemplate".into(), json!(RESOURCE_URI));
+    meta.0.insert(
+        "openai/toolInvocation/invoking".into(),
+        json!("Searching YouTube..."),
+    );
+    meta.0.insert(
+        "openai/toolInvocation/invoked".into(),
+        json!("Search ready"),
+    );
+    meta
+}
+
+pub fn app_callable_tool_meta() -> Meta {
+    let mut meta = ui_meta(json!({ "visibility": ["model", "app"] }));
+    meta.0.insert("openai/widgetAccessible".into(), json!(true));
+    meta.0.insert("openai/visibility".into(), json!("public"));
+    meta
 }
 
 fn ui_meta(value: serde_json::Value) -> Meta {

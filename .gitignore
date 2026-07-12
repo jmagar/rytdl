@@ -24,3 +24,8 @@ packages/ytdl-rmcp/vendor/
 *.mcpb.sha256
 *.dxt
 *.dxt.sha256
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key

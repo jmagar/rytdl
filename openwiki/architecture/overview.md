@@ -50,6 +50,31 @@ The server implements `rmcp::ServerHandler` via the `YtdlServer` struct in [`src
 
 Tests are sibling files (`foo_tests.rs`) wired via `#[cfg(test)] #[path = "foo_tests.rs"] mod tests;`.
 
+## MCP Apps compatibility model
+
+`youtube_search_ui` is the north-star UI pattern for the rmcp server family. The
+server keeps the MCP Apps standard as the source of truth while adding ChatGPT
+compatibility aliases for hosts that still inspect OpenAI-specific metadata:
+
+- Tool metadata uses `_meta.ui.resourceUri` and, for ChatGPT compatibility,
+  `openai/outputTemplate` plus short invocation status strings.
+- Resource metadata uses `_meta.ui.csp`, `_meta.ui.prefersBorder`, and
+  `_meta.ui.permissions`; it mirrors CSP into `openai/widgetCSP` and includes
+  `redirect_domains` for ChatGPT `openExternal` support.
+- Tools the iframe calls directly (`youtube_search`, `youtube_probe`,
+  `youtube_download`, and `youtube_stats`) advertise `_meta.ui.visibility:
+  ["model", "app"]` and `openai/widgetAccessible: true`.
+- The widget runtime prefers `@modelcontextprotocol/ext-apps` (`App`,
+  `callServerTool`, `sendMessage`, `openLink`, `requestDisplayMode`,
+  `downloadFile`, `updateModelContext`, `sendLog`, and host-context callbacks),
+  with `window.openai` fallbacks for ChatGPT-specific state, messages, links,
+  display mode, and tool calls.
+- The widget demonstrates a reusable multi-view layout with `Search` and
+  `Stats` tabs. `Stats` calls `youtube_stats` and renders totals plus recent
+  activity without adding a separate app resource.
+- Packaging formats such as `.mcpb` and `.dxt` are install/distribution
+  concerns. UI rendering remains a tools/resources protocol contract.
+
 ## Conventions
 
 - **500 LOC limit** — Split larger files into `foo/` submodules instead

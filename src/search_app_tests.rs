@@ -22,6 +22,13 @@ fn app_resource_contains_html_and_aurora_hooks() {
     assert!(text.contains("YouTube search"));
     assert!(text.contains("--aurora-page-bg"));
     assert!(text.contains("callServerTool"));
+    assert!(text.contains("data-view=\"search\""));
+    assert!(text.contains("data-view=\"stats\""));
+    assert!(text.contains("loadStats"));
+    assert!(text.contains("youtube_stats"));
+    assert!(text.contains("renderStats"));
+    assert!(text.contains("app.openLink"));
+    assert!(text.contains("window.open"));
     assert!(text.contains("window.McpExtApps"));
     // The originating query arrives nested under `arguments` in the tool-input
     // notification; seeding the search box from a flat `params.query` leaves it
@@ -32,11 +39,31 @@ fn app_resource_contains_html_and_aurora_hooks() {
     // must translate it into an actionable message instead of a raw 404.
     assert!(text.contains("tools/call failed:"));
     assert!(!text.contains("{{MCP_EXT_APPS_BUNDLE}}"));
+    assert!(!text.contains("{{YOUTUBE_SEARCH_APP_SCRIPT}}"));
     assert!(!text.contains("https://esm.sh"));
     let ui = meta.as_ref().unwrap().0.get("ui").unwrap();
     assert_eq!(
         ui["csp"]["resourceDomains"][0],
         serde_json::json!("https://i.ytimg.com")
+    );
+    assert_eq!(ui["prefersBorder"], serde_json::json!(true));
+    assert_eq!(
+        meta.as_ref().unwrap().0["openai/widgetDescription"],
+        serde_json::json!(
+            "Interactive YouTube search results with probe, download, open-link, and follow-up actions."
+        )
+    );
+    assert_eq!(
+        meta.as_ref().unwrap().0["openai/widgetPrefersBorder"],
+        serde_json::json!(true)
+    );
+    assert_eq!(
+        meta.as_ref().unwrap().0["openai/widgetCSP"]["resource_domains"][0],
+        serde_json::json!("https://i.ytimg.com")
+    );
+    assert_eq!(
+        meta.as_ref().unwrap().0["openai/widgetCSP"]["redirect_domains"][0],
+        serde_json::json!("https://www.youtube.com")
     );
 }
 
@@ -74,4 +101,28 @@ fn tool_meta_links_to_app_resource() {
         meta.0["ui"]["resourceUri"],
         serde_json::json!(super::RESOURCE_URI)
     );
+    assert_eq!(
+        meta.0["openai/outputTemplate"],
+        serde_json::json!(super::RESOURCE_URI)
+    );
+    assert_eq!(
+        meta.0["openai/toolInvocation/invoking"],
+        serde_json::json!("Searching YouTube...")
+    );
+    assert_eq!(
+        meta.0["openai/toolInvocation/invoked"],
+        serde_json::json!("Search ready")
+    );
+}
+
+#[test]
+fn callable_tool_meta_marks_helpers_app_accessible() {
+    let meta = super::app_callable_tool_meta();
+
+    assert_eq!(
+        meta.0["ui"]["visibility"],
+        serde_json::json!(["model", "app"])
+    );
+    assert_eq!(meta.0["openai/widgetAccessible"], serde_json::json!(true));
+    assert_eq!(meta.0["openai/visibility"], serde_json::json!("public"));
 }

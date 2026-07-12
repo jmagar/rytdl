@@ -110,7 +110,8 @@ impl YtdlServer {
     /// target path. Audio and video can go to separate destinations.
     #[tool(
         name = "youtube_download",
-        description = "Download audio/video from a yt-dlp-supported URL, tag it, and transfer it to a local, SSH, or rclone target."
+        description = "Download audio/video from a yt-dlp-supported URL, tag it, and transfer it to a local, SSH, or rclone target.",
+        meta = search_app::app_callable_tool_meta()
     )]
     async fn youtube_download(
         &self,
@@ -143,7 +144,8 @@ impl YtdlServer {
     /// downloading. Useful to confirm a target before a large download.
     #[tool(
         name = "youtube_probe",
-        description = "Inspect media metadata (title, duration, uploader, formats) without downloading."
+        description = "Inspect media metadata (title, duration, uploader, formats) without downloading.",
+        meta = search_app::app_callable_tool_meta()
     )]
     async fn youtube_probe(
         &self,
@@ -207,7 +209,8 @@ impl YtdlServer {
     /// can be passed to `youtube_probe` or `youtube_download`.
     #[tool(
         name = "youtube_search",
-        description = "Search YouTube with yt-dlp and return matching video URLs without downloading."
+        description = "Search YouTube with yt-dlp and return matching video URLs without downloading.",
+        meta = search_app::app_callable_tool_meta()
     )]
     async fn youtube_search(
         &self,
@@ -234,7 +237,8 @@ impl YtdlServer {
     /// Summarize the persistent download ledger written by `youtube_download`.
     #[tool(
         name = "youtube_stats",
-        description = "Summarize ytdl-rmcp download history, totals, file kinds, uploaders, and recent entries."
+        description = "Summarize ytdl-rmcp download history, totals, file kinds, uploaders, and recent entries.",
+        meta = search_app::app_callable_tool_meta()
     )]
     async fn youtube_stats(
         &self,

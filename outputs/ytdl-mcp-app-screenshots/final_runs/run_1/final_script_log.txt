@@ -1,0 +1,5 @@
+step 1 action: captured desktop Search view at /home/jmagar/workspace/ytdl-mcp/outputs/ytdl-mcp-app-screenshots/final_runs/run_1/screenshots/final_execution_1_search_desktop.png
+step 2 action: captured desktop Stats view at /home/jmagar/workspace/ytdl-mcp/outputs/ytdl-mcp-app-screenshots/final_runs/run_1/screenshots/final_execution_2_stats_desktop.png
+step 1 action: captured mobile Search view at /home/jmagar/workspace/ytdl-mcp/outputs/ytdl-mcp-app-screenshots/final_runs/run_1/screenshots/final_execution_1_search_mobile.png
+step 2 action: captured mobile Stats view at /home/jmagar/workspace/ytdl-mcp/outputs/ytdl-mcp-app-screenshots/final_runs/run_1/screenshots/final_execution_2_stats_mobile.png
+final datum: four screenshots captured for Search and Stats views
