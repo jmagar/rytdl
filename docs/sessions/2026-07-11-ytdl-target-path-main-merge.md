@@ -1,6 +1,6 @@
 ---
 date: 2026-07-11 01:54:30 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: 6863ec8
 working directory: /home/jmagar/workspace/ytdl-mcp
@@ -180,8 +180,8 @@ The main code and release work has already landed and passed CI. The remaining r
 
 ## References
 
-- PR `#25`: `https://github.com/jmagar/ytdl-rmcp/pull/25`
-- CI run `29141623501`: `https://github.com/jmagar/ytdl-rmcp/actions/runs/29141623501`
+- PR `#25`: `https://github.com/jmagar/rytdl/pull/25`
+- CI run `29141623501`: `https://github.com/jmagar/rytdl/actions/runs/29141623501`
 - Release commit: `dd58bd6 chore(main): release 1.0.0`
 - Merge commit: `6863ec8 Merge pull request #25 from jmagar/release-please--branches--main--components--ytdl-rmcp`
 - Implementation commits: `4cc891e feat!: unify transfer targets`, `c0af9e7 fix: harden target path migration`

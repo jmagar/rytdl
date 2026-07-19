@@ -1,6 +1,6 @@
 ---
 date: 2026-06-12 21:55:53 EDT
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: codex/metadata-playlist-sync
 head: fb15ce8
 working directory: /home/jmagar/workspace/ytdl-rmcp
@@ -219,7 +219,7 @@ download retagging.
 ## Open Questions
 
 - Whether to switch tootie Compose from `ytdl-rmcp:local` to
-  `ghcr.io/jmagar/ytdl-rmcp:main` after the main-branch workflow publishes.
+  `ghcr.io/jmagar/rytdl:main` after the main-branch workflow publishes.
 
 ## Next Steps
 

@@ -8,9 +8,9 @@
   "author": {
     "name": "Jacob Magar"
   },
-  "homepage": "https://github.com/jmagar/ytdl-rmcp",
-  "documentation": "https://github.com/jmagar/ytdl-rmcp/blob/main/README.md",
-  "support": "https://github.com/jmagar/ytdl-rmcp/issues",
+  "homepage": "https://github.com/jmagar/rytdl",
+  "documentation": "https://github.com/jmagar/rytdl/blob/main/README.md",
+  "support": "https://github.com/jmagar/rytdl/issues",
   "license": "MIT",
   "keywords": [
     "yt-dlp",

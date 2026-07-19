@@ -1,6 +1,6 @@
 ---
 date: 2026-06-12 10:39:48 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: codex/metadata-playlist-sync
 head: c6a0d62
 session id: e4558680-1081-4d6a-8417-e10f29ef0281

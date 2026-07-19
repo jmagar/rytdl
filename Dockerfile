@@ -19,8 +19,8 @@ FROM debian:bookworm-slim@sha256:96e378d7e6531ac9a15ad505478fcc2e69f371b10f5cdf8
 ARG VCS_REF=unknown
 LABEL org.opencontainers.image.title="ytdl-rmcp" \
       org.opencontainers.image.description="Cross-platform single-binary MCP server: downloads media with yt-dlp, embeds metadata + cover art, organizes by artist, and transfers to local, SSH, or rclone targets." \
-      org.opencontainers.image.source="https://github.com/jmagar/ytdl-rmcp" \
-      org.opencontainers.image.url="https://github.com/jmagar/ytdl-rmcp" \
+      org.opencontainers.image.source="https://github.com/jmagar/rytdl" \
+      org.opencontainers.image.url="https://github.com/jmagar/rytdl" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.revision="${VCS_REF}"
 

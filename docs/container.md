@@ -23,14 +23,14 @@ docker build -t ytdl-rmcp:local .
 Every push to `main` publishes:
 
 ```text
-ghcr.io/jmagar/ytdl-rmcp:main
-ghcr.io/jmagar/ytdl-rmcp:main-<git-sha>
+ghcr.io/jmagar/rytdl:main
+ghcr.io/jmagar/rytdl:main-<git-sha>
 ```
 
 Pull the latest `main` image with:
 
 ```bash
-docker pull ghcr.io/jmagar/ytdl-rmcp:main
+docker pull ghcr.io/jmagar/rytdl:main
 ```
 
 ## Run As An MCP Server
@@ -46,11 +46,11 @@ docker run --rm -i \
   -v "$HOME/.ssh:/home/ytdl/.ssh:ro" \
   -v ytdl-rmcp-state:/home/ytdl/.local/state/ytdl-rmcp \
   -v ytdl-rmcp-cache:/home/ytdl/.cache \
-  ghcr.io/jmagar/ytdl-rmcp:main serve
+  ghcr.io/jmagar/rytdl:main serve
 ```
 
 For MCP clients that expect a command, use
-`docker run --rm -i ... ghcr.io/jmagar/ytdl-rmcp:main serve` as the command.
+`docker run --rm -i ... ghcr.io/jmagar/rytdl:main serve` as the command.
 
 ## Identify A Mounted Library
 
@@ -62,7 +62,7 @@ docker run --rm -i \
   -e YTDLP_ACOUSTID_CLIENT_KEY="$YTDLP_ACOUSTID_CLIENT_KEY" \
   -e YTDLP_MUSICBRAINZ_CONTACT="you@example.com" \
   -v /mnt/user/data/media/music/yt-dlp:/library \
-  ghcr.io/jmagar/ytdl-rmcp:main serve
+  ghcr.io/jmagar/rytdl:main serve
 ```
 
 Then call:

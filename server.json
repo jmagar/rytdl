@@ -4,9 +4,9 @@
   "title": "YTDL RMCP",
   "description": "Rust MCP server and CLI for yt-dlp search, downloads, metadata, transfers, and Plex playlists.",
   "version": "1.0.2",
-  "websiteUrl": "https://github.com/jmagar/ytdl-rmcp",
+  "websiteUrl": "https://github.com/jmagar/rytdl",
   "repository": {
-    "url": "https://github.com/jmagar/ytdl-rmcp",
+    "url": "https://github.com/jmagar/rytdl",
     "source": "github",
     "id": "1259656855"
   },
@@ -64,8 +64,8 @@
           "format": "string",
           "isRequired": false,
           "isSecret": false,
-          "default": "https://github.com/jmagar/ytdl-rmcp/releases/download",
-          "placeholder": "https://github.com/jmagar/ytdl-rmcp/releases/download"
+          "default": "https://github.com/jmagar/rytdl/releases/download",
+          "placeholder": "https://github.com/jmagar/rytdl/releases/download"
         },
         {
           "name": "RUST_LOG",
@@ -92,7 +92,7 @@
       },
       "buildInfo": {
         "version": "1.0.2",
-        "repository": "https://github.com/jmagar/ytdl-rmcp"
+        "repository": "https://github.com/jmagar/rytdl"
       }
     }
   }

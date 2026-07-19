@@ -6,8 +6,8 @@ categories = ["command-line-utilities", "development-tools"]
 keywords = ["mcp", "yt-dlp", "youtube", "media", "plex"]
 description = "Rust MCP server and CLI for yt-dlp media search, downloads, metadata tagging, transfer queues, and Plex playlists."
 license = "MIT"
-homepage = "https://github.com/jmagar/ytdl-rmcp#readme"
-repository = "https://github.com/jmagar/ytdl-rmcp"
+homepage = "https://github.com/jmagar/rytdl#readme"
+repository = "https://github.com/jmagar/rytdl"
 default-run = "rytdl"
 build = "build.rs"
 

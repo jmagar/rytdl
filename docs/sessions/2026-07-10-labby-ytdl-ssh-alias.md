@@ -1,6 +1,6 @@
 ---
 date: 2026-07-10 23:49:29 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: 808953a
 working directory: /home/jmagar/workspace/ytdl-mcp

@@ -109,7 +109,7 @@ invoke the real rustup cargo directly: `~/.cargo/bin/cargo xwin build …`.
 
 ## Distribution
 
-- **GitHub**: `jmagar/ytdl-rmcp`. Release CI in `.github/workflows/release.yml`
+- **GitHub**: `jmagar/rytdl`. Release CI in `.github/workflows/release.yml`
   builds linux + windows-msvc and attaches to `v*` releases; `ci.yml` runs
   fmt/clippy/test + a Windows cross-build smoke per push/PR.
 - **npm launcher**: `packages/ytdl-rmcp` publishes `ytdl-rmcp` to npm. MCP clients

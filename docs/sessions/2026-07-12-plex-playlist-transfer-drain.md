@@ -4,7 +4,7 @@ Date: 2026-07-12
 
 Worktree: `/home/jmagar/workspace/ytdl-mcp/.worktrees/plex-playlist-transfer-drain`
 Branch: `codex/plex-playlist-transfer-drain`
-PR: https://github.com/jmagar/ytdl-rmcp/pull/29
+PR: https://github.com/jmagar/rytdl/pull/29
 
 ## Summary
 

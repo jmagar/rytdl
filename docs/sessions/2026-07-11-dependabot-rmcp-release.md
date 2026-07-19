@@ -1,6 +1,6 @@
 ---
 date: 2026-07-11 17:58:46 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: e519d0e
 working directory: /home/jmagar/workspace/ytdl-mcp
@@ -175,13 +175,13 @@ The latest `OpenWiki Update` workflow on `main` failed after all merges with a t
 
 ## References
 
-- PR #26: https://github.com/jmagar/ytdl-rmcp/pull/26
-- PR #27: https://github.com/jmagar/ytdl-rmcp/pull/27
-- PR #28: https://github.com/jmagar/ytdl-rmcp/pull/28
-- Release `v1.0.1`: https://github.com/jmagar/ytdl-rmcp/releases/tag/v1.0.1
+- PR #26: https://github.com/jmagar/rytdl/pull/26
+- PR #27: https://github.com/jmagar/rytdl/pull/27
+- PR #28: https://github.com/jmagar/rytdl/pull/28
+- Release `v1.0.1`: https://github.com/jmagar/rytdl/releases/tag/v1.0.1
 - `rmcp` docs: https://docs.rs/rmcp
 - `rmcp` releases: https://github.com/modelcontextprotocol/rust-sdk/releases
-- Failed OpenWiki run: https://github.com/jmagar/ytdl-rmcp/actions/runs/29169651398
+- Failed OpenWiki run: https://github.com/jmagar/rytdl/actions/runs/29169651398
 
 ## Open Questions
 

@@ -5,7 +5,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jmagar/ytdl-rmcp.git",
+    "url": "git+https://github.com/jmagar/rytdl.git",
     "directory": "packages/ytdl-rmcp"
   },
   "bin": {
@@ -16,19 +16,23 @@
     "bin/",
     "lib/",
     "scripts/",
-    "README.md"
+    "README.md",
+    "LICENSE*",
+    "package.json"
   ],
   "scripts": {
+    "prepack": "node scripts/sync-readme.js",
     "postinstall": "node scripts/install.js",
     "test": "node --test",
-    "check": "node --check bin/rytdl.js && node --check scripts/install.js && node --check lib/platform.js"
+    "check": "node --check bin/rytdl.js && node --check scripts/install.js && node --check lib/platform.js && node --check scripts/sync-readme.js && node --check scripts/check-package.js && node scripts/check-package.js",
+    "prepublishOnly": "node scripts/check-package.js --release"
   },
   "engines": {
     "node": ">=18"
   },
-  "homepage": "https://github.com/jmagar/ytdl-rmcp#readme",
+  "homepage": "https://github.com/jmagar/rytdl#readme",
   "bugs": {
-    "url": "https://github.com/jmagar/ytdl-rmcp/issues"
+    "url": "https://github.com/jmagar/rytdl/issues"
   },
   "keywords": [
     "mcp",
@@ -52,5 +56,9 @@
     "mcp-apps"
   ],
   "mcpName": "ai.dinglebear/ytdl-rmcp",
-  "binaryVersion": "1.0.1"
+  "binaryVersion": "1.0.1",
+  "author": {
+    "name": "dinglebear.ai",
+    "url": "https://dinglebear.ai"
+  }
 }

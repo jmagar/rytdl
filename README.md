@@ -1,8 +1,8 @@
 # ytdl-rmcp
 
 [![npm version](https://img.shields.io/npm/v/ytdl-rmcp.svg)](https://www.npmjs.com/package/ytdl-rmcp)
-[![release](https://github.com/jmagar/ytdl-rmcp/actions/workflows/release.yml/badge.svg)](https://github.com/jmagar/ytdl-rmcp/actions/workflows/release.yml)
-[![CI](https://github.com/jmagar/ytdl-rmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/jmagar/ytdl-rmcp/actions/workflows/ci.yml)
+[![release](https://github.com/jmagar/rytdl/actions/workflows/release.yml/badge.svg)](https://github.com/jmagar/rytdl/actions/workflows/release.yml)
+[![CI](https://github.com/jmagar/rytdl/actions/workflows/ci.yml/badge.svg)](https://github.com/jmagar/rytdl/actions/workflows/ci.yml)
 
 A cross-platform, single-binary **MCP server** that downloads media from any
 [yt-dlp](https://github.com/yt-dlp/yt-dlp)-supported site (YouTube, Vimeo, …),
@@ -321,11 +321,11 @@ The npm package downloads the matching GitHub Release binary during
 Node launcher. You can also use the one-line installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jmagar/ytdl-rmcp/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/jmagar/rytdl/main/scripts/install.sh | bash
 ```
 
 Or download the binary tarball for your platform from
-[Releases](https://github.com/jmagar/ytdl-rmcp/releases), or build it (see below).
+[Releases](https://github.com/jmagar/rytdl/releases), or build it (see below).
 The guided setup fetches yt-dlp + ffmpeg, prompts for your audio/video target
 paths, detects which agent CLIs are present, and registers the server into the
 ones you pick.
@@ -432,7 +432,7 @@ extraction.
 | Guided setup | `npx -y ytdl-rmcp setup` | Registers Claude Code, Codex, and Gemini CLI configs where available. |
 | MCP App | `youtube_search_ui` | Embedded search widget plus normal fallback tool output. |
 | Bundle | `mcpb/manifest.json` | Binary MCPB/DXT package for desktop hosts that support bundles. |
-| Container | `ghcr.io/jmagar/ytdl-rmcp:main` | Includes ffmpeg, fpcalc, SSH, rclone, and rsync for shared deployments. |
+| Container | `ghcr.io/jmagar/rytdl:main` | Includes ffmpeg, fpcalc, SSH, rclone, and rsync for shared deployments. |
 
 ## Distribution Contract
 
@@ -444,9 +444,9 @@ extraction.
   `userConfig`; `.mcp.json` launches `npx -y ytdl-rmcp`, which downloads the
   matching GitHub Release binary through npm.
 - **Gemini CLI extension** — `gemini-extension.json`; install with
-  `gemini extensions install https://github.com/jmagar/ytdl-rmcp`. MCP clients
+  `gemini extensions install https://github.com/jmagar/rytdl`. MCP clients
   should prefer the npm launcher command, `npx -y ytdl-rmcp`.
-- **Container image** — `ghcr.io/jmagar/ytdl-rmcp:main` is published on every
+- **Container image** — `ghcr.io/jmagar/rytdl:main` is published on every
   push to `main`, or build locally with `docker build -t ytdl-rmcp:local .`. It
   includes `ffmpeg`, `fpcalc`, `openssh-client`, `rclone`, and `rsync`. See
   [`docs/container.md`](docs/container.md) for MCP and mounted-library examples.
@@ -676,14 +676,14 @@ See `CLAUDE.md` for architecture, conventions, and gotchas.
 ## Related Servers
 
 - [soma](https://github.com/jmagar/soma) - RMCP runtime for provider-backed MCP servers.
-- [unifi-rmcp](https://github.com/jmagar/unifi-rmcp) - UniFi controller REST API bridge.
-- [tailscale-rmcp](https://github.com/jmagar/tailscale-rmcp) - Tailscale API bridge for devices, users, and tailnet operations.
-- [unraid-rmcp](https://github.com/jmagar/unraid-rmcp) - Unraid GraphQL bridge for NAS and server management.
-- [apprise-rmcp](https://github.com/jmagar/apprise-rmcp) - Apprise notification fan-out bridge for many delivery backends.
-- [gotify-rmcp](https://github.com/jmagar/gotify-rmcp) - Gotify push notification bridge for sends, messages, apps, and clients.
-- [arcane-rmcp](https://github.com/jmagar/arcane-rmcp) - Arcane Docker management bridge for containers and related resources.
+- [unifi-rmcp](https://github.com/jmagar/runifi) - UniFi controller REST API bridge.
+- [tailscale-rmcp](https://github.com/jmagar/rtailscale) - Tailscale API bridge for devices, users, and tailnet operations.
+- [unraid-rmcp](https://github.com/jmagar/runraid) - Unraid GraphQL bridge for NAS and server management.
+- [apprise-rmcp](https://github.com/jmagar/rapprise) - Apprise notification fan-out bridge for many delivery backends.
+- [gotify-rmcp](https://github.com/jmagar/rgotify) - Gotify push notification bridge for sends, messages, apps, and clients.
+- [arcane-rmcp](https://github.com/jmagar/rarcane) - Arcane Docker management bridge for containers and related resources.
 - [yarr](https://github.com/jmagar/yarr) - Media-stack bridge for Sonarr, Radarr, Prowlarr, Plex, and related services.
-- [synapse-rmcp](https://github.com/jmagar/synapse-rmcp) - Local Synapse workflow server for scout and flux actions.
+- [synapse-rmcp](https://github.com/jmagar/synapse) - Local Synapse workflow server for scout and flux actions.
 - [cortex](https://github.com/jmagar/cortex) - Syslog and homelab log aggregation MCP server.
 - [axon](https://github.com/jmagar/axon) - RAG, crawl, scrape, extract, and semantic search project.
 - [labby](https://github.com/jmagar/labby) - Homelab control plane and MCP gateway project.

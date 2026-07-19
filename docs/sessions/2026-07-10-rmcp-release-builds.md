@@ -1,6 +1,6 @@
 ---
 date: 2026-07-10 23:49:49 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: 808953a
 working directory: /home/jmagar/workspace/ytdl-mcp
@@ -158,12 +158,12 @@ They were not staged or committed as part of this session artifact.
 
 | command | expected | actual | status |
 | --- | --- | --- | --- |
-| `gh run list --repo jmagar/apprise-rmcp --limit 5` | Latest main CI/Docker green. | `CI`, `Docker Publish`, `Sync marketplace-no-mcp`, and `release-please` were green at `f725433`. | pass |
-| `gh run list --repo jmagar/synapse-rmcp --limit 5` | Main and release-please branch green. | Main CodeQL/MSRV/release-please green; release branch CI/MSRV green. | pass |
-| `gh run list --repo jmagar/unraid-rmcp --limit 5` | Latest main CI/Docker green. | CI, Docker, Sync, and release-please green at `90e9681`. | pass |
-| `gh run list --repo jmagar/unifi-rmcp --limit 5` | Main green. | Main Sync green; CI/Docker were in progress at `84fbe6f` during final save sweep. Earlier main at `2647842` was green. | warn |
+| `gh run list --repo jmagar/rapprise --limit 5` | Latest main CI/Docker green. | `CI`, `Docker Publish`, `Sync marketplace-no-mcp`, and `release-please` were green at `f725433`. | pass |
+| `gh run list --repo jmagar/synapse --limit 5` | Main and release-please branch green. | Main CodeQL/MSRV/release-please green; release branch CI/MSRV green. | pass |
+| `gh run list --repo jmagar/runraid --limit 5` | Latest main CI/Docker green. | CI, Docker, Sync, and release-please green at `90e9681`. | pass |
+| `gh run list --repo jmagar/runifi --limit 5` | Main green. | Main Sync green; CI/Docker were in progress at `84fbe6f` during final save sweep. Earlier main at `2647842` was green. | warn |
 | `gh run list --repo jmagar/cortex --limit 5` | Latest non-superseded release branch green. | Latest release branch `348b332` CI/Docker green; earlier release branch `06cf4f8` CI failed and was superseded. | pass |
-| `gh run list --repo jmagar/arcane-rmcp --limit 5` | No current main failures. | Current main `b432b57` had CI and CodeQL failures. | fail |
+| `gh run list --repo jmagar/rarcane --limit 5` | No current main failures. | Current main `b432b57` had CI and CodeQL failures. | fail |
 | `cargo nextest run --profile ci` in Apprise | Tests pass. | 19 tests passed locally. | pass |
 | `cargo audit` in Apprise | No unhandled advisories. | Passed locally after patch bumps and narrow RSA ignore. | pass |
 | `cargo test --all-targets --features test-support --no-run` in Unraid | Compile all test targets. | Passed locally. | pass |
@@ -185,7 +185,7 @@ They were not staged or committed as part of this session artifact.
 
 ## References
 
-- GitHub Actions run lists for `jmagar/ytdl-rmcp`, `jmagar/apprise-rmcp`, `jmagar/arcane-rmcp`, `jmagar/gotify-rmcp`, `jmagar/synapse-rmcp`, `jmagar/tailscale-rmcp`, `jmagar/unifi-rmcp`, `jmagar/unraid-rmcp`, and `jmagar/cortex`.
+- GitHub Actions run lists for `jmagar/rytdl`, `jmagar/rapprise`, `jmagar/rarcane`, `jmagar/rgotify`, `jmagar/synapse`, `jmagar/rtailscale`, `jmagar/runifi`, `jmagar/runraid`, and `jmagar/cortex`.
 - Local repo state from `/home/jmagar/workspace/ytdl-mcp`, `/home/jmagar/workspace/apprise-rmcp`, `/home/jmagar/workspace/synapse`, `/home/jmagar/workspace/cortex`, `/home/jmagar/workspace/unifi-rmcp`, and `/home/jmagar/workspace/unraid-rmcp`.
 
 ## Open Questions

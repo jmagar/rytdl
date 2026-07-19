@@ -1,6 +1,6 @@
 ---
 date: 2026-06-13 15:06:15 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: 8d0d353
 session id: e4558680-1081-4d6a-8417-e10f29ef0281
@@ -220,11 +220,11 @@ The available transcript path was read, but it did not contain the active Codex 
 
 ## References
 
-- Release: https://github.com/jmagar/ytdl-rmcp/releases/tag/v0.7.0-main.4.8d0d3530681c
+- Release: https://github.com/jmagar/rytdl/releases/tag/v0.7.0-main.4.8d0d3530681c
 - Upstream MCPB issue: https://github.com/modelcontextprotocol/mcpb/issues/279
-- Release workflow run: https://github.com/jmagar/ytdl-rmcp/actions/runs/27457134241
-- CI workflow run: https://github.com/jmagar/ytdl-rmcp/actions/runs/27457134238
-- Container workflow run: https://github.com/jmagar/ytdl-rmcp/actions/runs/27457134245
+- Release workflow run: https://github.com/jmagar/rytdl/actions/runs/27457134241
+- CI workflow run: https://github.com/jmagar/rytdl/actions/runs/27457134238
+- Container workflow run: https://github.com/jmagar/rytdl/actions/runs/27457134245
 
 ## Open Questions
 

@@ -1,11 +1,11 @@
 ---
 date: 2026-06-11 01:59:00 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: codex/youtube-search-mcp-ui
 head: 3c6f427
 working directory: /home/jmagar/workspace/ytdl-rmcp/.worktrees/youtube-search-mcp-ui
 worktree: /home/jmagar/workspace/ytdl-rmcp/.worktrees/youtube-search-mcp-ui
-pr: "#2 Add YouTube search MCP tool and UI (https://github.com/jmagar/ytdl-rmcp/pull/2)"
+pr: "#2 Add YouTube search MCP tool and UI (https://github.com/jmagar/rytdl/pull/2)"
 ---
 
 # YouTube search MCP tool and UI session
@@ -114,7 +114,7 @@ The main checkout branch `main` is ahead of `origin/main` by `8e986e2 chore: ign
 | `mcporter call --config /tmp/ytdl-rmcporter-config.json ytdl-local.youtube_search ...` | Returned fake YouTube search result URL. |
 | `mcporter resource --config /tmp/ytdl-rmcporter-config.json ytdl-local ui://ytdl-rmcp/youtube-search.html --output raw` | Resource contained `window.McpExtApps`, `text/html;profile=mcp-app`, and no `https://esm.sh`. |
 | `/usr/bin/google-chrome --headless=new --screenshot=docs/superpowers/artifacts/youtube-search-ui-render.png file:///tmp/youtube-search-app-expanded.html?demo` | Produced a nonblank UI screenshot. |
-| `gh pr checks 2 --repo jmagar/ytdl-rmcp` | Earlier run passed; new run was pending at session-log write time after final push. |
+| `gh pr checks 2 --repo jmagar/rytdl` | Earlier run passed; new run was pending at session-log write time after final push. |
 
 ## Errors Encountered
 
@@ -147,7 +147,7 @@ The main checkout branch `main` is ahead of `origin/main` by `8e986e2 chore: ign
 | `node --check /tmp/youtube-search-app-inline.js` | UI script parses. | Passed. | pass |
 | `mcporter list/call/resource` | Tools listed, search callable, UI resource readable. | Passed with fake yt-dlp and temp config. | pass |
 | Headless Chrome screenshot | Demo UI renders nonblank and framed. | Passed; screenshot inspected. | pass |
-| `gh pr checks 2 --repo jmagar/ytdl-rmcp` | CI green. | Previous run green; final push run pending when this note was written. | warn |
+| `gh pr checks 2 --repo jmagar/rytdl` | CI green. | Previous run green; final push run pending when this note was written. | warn |
 
 ## Risks and Rollback
 
@@ -161,7 +161,7 @@ The search implementation depends on yt-dlp search JSON shape and YouTube extrac
 
 ## References
 
-- PR #2: https://github.com/jmagar/ytdl-rmcp/pull/2
+- PR #2: https://github.com/jmagar/rytdl/pull/2
 - MCP Apps/ext-apps package reference cloned under `/tmp/mcp-ext-apps-ytdl`
 - mcporter CLI help and `testing:mcporter` skill guidance
 - Aurora design tokens from the invoked Aurora design-system skill
@@ -173,5 +173,5 @@ The search implementation depends on yt-dlp search JSON shape and YouTube extrac
 ## Next Steps
 
 1. Wait for final PR checks to complete after the session-log commit push.
-2. Re-run `gh pr checks 2 --repo jmagar/ytdl-rmcp` and confirm check, packaging, cross-build, GitGuardian, and CodeRabbit remain green.
+2. Re-run `gh pr checks 2 --repo jmagar/rytdl` and confirm check, packaging, cross-build, GitGuardian, and CodeRabbit remain green.
 3. Merge PR #2 when the final checks are green and no new actionable review comments appear.

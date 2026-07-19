@@ -1,6 +1,6 @@
 ---
 date: 2026-07-12 21:21:30 EST
-repo: git@github.com:jmagar/ytdl-rmcp.git
+repo: git@github.com:jmagar/rytdl.git
 branch: main
 head: 8df665b
 working directory: /home/jmagar/workspace/ytdl-mcp
@@ -209,7 +209,7 @@ The transcript glob command returned a zsh `no matches found` message for the Cl
 ## References
 
 - PR #31: `chore(main): release 1.0.2`, merged as `af30e3c`.
-- GitHub Actions CI run: `https://github.com/jmagar/ytdl-rmcp/actions/runs/29208588354`.
+- GitHub Actions CI run: `https://github.com/jmagar/rytdl/actions/runs/29208588354`.
 - Current docs commit: `8df665b docs: link related rmcp projects`.
 - Protected branch commit: `93a90a1 chore(plugins): add no-mcp marketplace variant`.
 

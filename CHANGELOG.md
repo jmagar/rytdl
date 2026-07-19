@@ -5,12 +5,12 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.2](https://github.com/jmagar/ytdl-rmcp/compare/v1.0.1...v1.0.2) (2026-07-12)
+## [1.0.2](https://github.com/jmagar/rytdl/compare/v1.0.1...v1.0.2) (2026-07-12)
 
 
 ### Fixed
 
-* stabilize local transfer queue retries ([#30](https://github.com/jmagar/ytdl-rmcp/issues/30)) ([33797c6](https://github.com/jmagar/ytdl-rmcp/commit/33797c645776e768a4428b985682c8cfbd06ad25))
+* stabilize local transfer queue retries ([#30](https://github.com/jmagar/rytdl/issues/30)) ([33797c6](https://github.com/jmagar/rytdl/commit/33797c645776e768a4428b985682c8cfbd06ad25))
 
 ## [Unreleased]
 
@@ -22,17 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failures, with list/retry/retry-all/prune actions.
 - Extended the MCP app with Playlist and Transfers tabs.
 
-## [1.0.1](https://github.com/jmagar/ytdl-rmcp/compare/v1.0.0...v1.0.1) (2026-07-11)
+## [1.0.1](https://github.com/jmagar/rytdl/compare/v1.0.0...v1.0.1) (2026-07-11)
 
 
 ### Dependencies
 
-* **deps:** bump actions/download-artifact from 4.3.0 to 8.0.1 ([#12](https://github.com/jmagar/ytdl-rmcp/issues/12)) ([3322370](https://github.com/jmagar/ytdl-rmcp/commit/3322370ce8cde64b9dd1634b40cb7d5f696b783f))
-* **deps:** bump actions/upload-artifact from 4.6.2 to 7.0.1 ([#8](https://github.com/jmagar/ytdl-rmcp/issues/8)) ([9850d0d](https://github.com/jmagar/ytdl-rmcp/commit/9850d0db3bddc33ab979fbe6233b808e5f5117f4))
-* **deps:** bump the cargo-dependencies group with 4 updates ([#26](https://github.com/jmagar/ytdl-rmcp/issues/26)) ([ba1a99f](https://github.com/jmagar/ytdl-rmcp/commit/ba1a99f76351bcfa06e10d201e6edcd84156f95c))
-* **deps:** bump the github-actions group with 14 updates ([#27](https://github.com/jmagar/ytdl-rmcp/issues/27)) ([9e8eb0d](https://github.com/jmagar/ytdl-rmcp/commit/9e8eb0d589e3df4441c183247fb55edbb4bbcbee))
+* **deps:** bump actions/download-artifact from 4.3.0 to 8.0.1 ([#12](https://github.com/jmagar/rytdl/issues/12)) ([3322370](https://github.com/jmagar/rytdl/commit/3322370ce8cde64b9dd1634b40cb7d5f696b783f))
+* **deps:** bump actions/upload-artifact from 4.6.2 to 7.0.1 ([#8](https://github.com/jmagar/rytdl/issues/8)) ([9850d0d](https://github.com/jmagar/rytdl/commit/9850d0db3bddc33ab979fbe6233b808e5f5117f4))
+* **deps:** bump the cargo-dependencies group with 4 updates ([#26](https://github.com/jmagar/rytdl/issues/26)) ([ba1a99f](https://github.com/jmagar/rytdl/commit/ba1a99f76351bcfa06e10d201e6edcd84156f95c))
+* **deps:** bump the github-actions group with 14 updates ([#27](https://github.com/jmagar/rytdl/issues/27)) ([9e8eb0d](https://github.com/jmagar/rytdl/commit/9e8eb0d589e3df4441c183247fb55edbb4bbcbee))
 
-## [1.0.0](https://github.com/jmagar/ytdl-rmcp/compare/v0.7.1...v1.0.0) (2026-07-11)
+## [1.0.0](https://github.com/jmagar/rytdl/compare/v0.7.1...v1.0.0) (2026-07-11)
 
 
 ### ⚠ BREAKING CHANGES
@@ -41,14 +41,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-* unify transfer targets ([4cc891e](https://github.com/jmagar/ytdl-rmcp/commit/4cc891e8e82d2621eb123dbbc6f161547b96de5f))
+* unify transfer targets ([4cc891e](https://github.com/jmagar/rytdl/commit/4cc891e8e82d2621eb123dbbc6f161547b96de5f))
 
 
 ### Fixed
 
-* align ytdl build workflows with rytdl binary ([f3377b5](https://github.com/jmagar/ytdl-rmcp/commit/f3377b55b1d71d3266aa8ce569274463971cbd79))
-* align ytdl npm launcher assets ([e1b392c](https://github.com/jmagar/ytdl-rmcp/commit/e1b392c2e69f332e5beecf12b45d95dc62337840))
-* harden target path migration ([c0af9e7](https://github.com/jmagar/ytdl-rmcp/commit/c0af9e7fcad01d04670e56139b83b740e2ed8094))
+* align ytdl build workflows with rytdl binary ([f3377b5](https://github.com/jmagar/rytdl/commit/f3377b55b1d71d3266aa8ce569274463971cbd79))
+* align ytdl npm launcher assets ([e1b392c](https://github.com/jmagar/rytdl/commit/e1b392c2e69f332e5beecf12b45d95dc62337840))
+* harden target path migration ([c0af9e7](https://github.com/jmagar/rytdl/commit/c0af9e7fcad01d04670e56139b83b740e2ed8094))
 
 ## [1.0.0] - 2026-07-11
 
@@ -126,6 +126,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   organization, YouTube mix/radio URL cleaning, and a `setup` installer that
   registers the server into Claude Code, Codex, and Gemini CLI.
 
-[Unreleased]: https://github.com/jmagar/ytdl-rmcp/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/jmagar/ytdl-rmcp/compare/v0.7.0...v1.0.0
-[0.7.0]: https://github.com/jmagar/ytdl-rmcp/releases/tag/v0.7.0
+[Unreleased]: https://github.com/jmagar/rytdl/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/jmagar/rytdl/compare/v0.7.0...v1.0.0
+[0.7.0]: https://github.com/jmagar/rytdl/releases/tag/v0.7.0
