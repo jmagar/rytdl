@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Container Runtime"
+openwiki_generated: true
+---
+
 # Container Runtime
 
 The container image packages `ytdl-mcp` with ffmpeg, fpcalc, SSH, rsync, and CA certificates for production media-host batch jobs. The server still runs MCP over stdio by default.
