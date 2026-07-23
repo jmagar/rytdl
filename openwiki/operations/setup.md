@@ -1,3 +1,9 @@
+---
+type: "Reference"
+title: "Setup and Configuration"
+openwiki_generated: true
+---
+
 # Setup and Configuration
 
 ytdl-mcp can be installed as a bare binary, Claude Code plugin, Gemini extension, or MCP bundle. All modes read configuration from `YTDLP_*` (and `FFMPEG_*`/`FPCALC_*`) environment variables.
